@@ -7,9 +7,13 @@ import {
   SystemConfig,
 } from '../types';
 import { SEED_QUESTIONS } from '../data/seedQuestions';
-import { buildSeedStudents } from '../data/seedStudents';
-import { SEED_EXAMS } from '../data/seedExams';
-import publishedDataRaw from '../data/publishedData.json';
+import { SEED_CLASSES, buildSeedStudents } from '../data/seedStudents';
+import {
+  SEED_EXAMS,
+  SEED_CONFIG,
+  SEED_SYNC_ID,
+  SEED_UPDATED_AT,
+} from '../data/seedExams';
 import { createStudentExamPaper } from './examShuffler';
 import { gradeStudentExam, normalizeQuestionStructure } from './grading';
 
@@ -28,21 +32,6 @@ const KEYS = {
   LAST_REPO_SYNC_AT: 'smarttest7_last_repo_sync_at_v1',
 };
 
-interface PublishedSnapshot {
-  isPublishedSnapshot?: boolean;
-  syncId?: string;
-  updatedAt?: string;
-  config?: SystemConfig;
-  classes?: string[];
-  questions?: Question[];
-  students?: Student[];
-  exams?: Exam[];
-  papers?: Record<string, StudentExamPaper>;
-  sessions?: Record<string, StudentExamSession>;
-}
-
-const PUBLISHED_SNAPSHOT = (publishedDataRaw || {}) as unknown as PublishedSnapshot;
-
 const SEED_QUESTION_MAP = new Map<string, Question>(
   SEED_QUESTIONS.map((sq) => [sq.id, sq])
 );
@@ -52,8 +41,9 @@ const DEFAULT_CONFIG: SystemConfig = {
   serverPort: 3000,
   schoolName: 'Trường TH & THCS Thụy Lâm',
   subjectName: 'Tin học 7 - Bộ sách Kết nối tri thức với cuộc sống',
-  activeExamId: 'exam_kt15p_c1',
+  activeExamId: SEED_CONFIG?.activeExamId ?? (SEED_EXAMS[0]?.id || null),
   autoSaveIntervalSeconds: 5,
+  ...SEED_CONFIG,
 };
 
 const memoryStore = new Map<string, string>();
@@ -189,14 +179,17 @@ function safeSetItem<T>(key: string, value: T): void {
       }
       localStorage.setItem(key, serialized);
     } catch {
-      // Nếu vẫn vượt hạn mức dung lượng trình duyệt, giải phóng bộ nhớ đệm papers trong localStorage
-      // (dữ liệu phiên hiện tại vẫn được bảo toàn đầy đủ trong memoryStore)
       try {
         if (key !== KEYS.PAPERS) {
           localStorage.removeItem(KEYS.PAPERS);
           localStorage.setItem(key, serialized);
         } else {
-          localStorage.setItem(key, JSON.stringify(compactPapersForStorage(value as unknown as Record<string, StudentExamPaper>)));
+          localStorage.setItem(
+            key,
+            JSON.stringify(
+              compactPapersForStorage(value as unknown as Record<string, StudentExamPaper>)
+            )
+          );
         }
       } catch {
         // Giữ nguyên trong memoryStore mà không ném lỗi ra console
@@ -257,7 +250,6 @@ export class AppStorage {
         localStorage.setItem(KEYS.PAPERS, compactedStr);
       }
     } catch {
-      // Nếu dữ liệu cũ bị hỏng, xóa khóa PAPERS để khởi tạo lại sạch sẽ
       try {
         localStorage.removeItem(KEYS.PAPERS);
       } catch {
@@ -267,87 +259,59 @@ export class AppStorage {
 
     const isBrowserEnv =
       typeof window !== 'undefined' && typeof window.document !== 'undefined';
-    const hasPublishedSnapshot =
-      isBrowserEnv &&
-      Boolean(PUBLISHED_SNAPSHOT?.isPublishedSnapshot) &&
-      Array.isArray(PUBLISHED_SNAPSHOT.questions) &&
-      PUBLISHED_SNAPSHOT.questions.length > 0;
-
-    // Nếu mở trên trình duyệt mới (như GitHub Pages) hoặc bản đóng gói có syncId mới và máy chưa có chỉnh sửa cục bộ
     const appliedPublishId = localStorage.getItem(KEYS.APPLIED_PUBLISH_ID);
     const hasLocalEdits = localStorage.getItem(KEYS.HAS_LOCAL_EDITS) === 'true';
     const hasExistingQuestions =
       Boolean(localStorage.getItem(KEYS.QUESTIONS)) || memoryStore.has(KEYS.QUESTIONS);
 
     if (
-      hasPublishedSnapshot &&
+      isBrowserEnv &&
+      SEED_QUESTIONS.length > 0 &&
       (!hasExistingQuestions ||
-        (PUBLISHED_SNAPSHOT.syncId &&
-          appliedPublishId !== PUBLISHED_SNAPSHOT.syncId &&
-          !hasLocalEdits))
+        (SEED_SYNC_ID && appliedPublishId !== SEED_SYNC_ID && !hasLocalEdits))
     ) {
-      // Nếu trình duyệt đã có dữ liệu từ trước khi có cơ chế HAS_LOCAL_EDITS, kiểm tra xem người dùng đã chỉnh sửa gì chưa
-      let shouldHydrateFromPublished = !hasExistingQuestions;
+      let shouldHydrateFromSeed = !hasExistingQuestions;
       if (hasExistingQuestions && !appliedPublishId) {
         const currentQs = safeGetItem<Question[]>(KEYS.QUESTIONS, []);
         const currentSts = safeGetItem<Student[]>(KEYS.STUDENTS, []);
-        const currentClasses = safeGetItem<string[]>(KEYS.CLASSES, ['7A', '7B']);
-        const isOldDefaultQuestions =
-          currentQs.length === 28 && currentQs.every((q) => SEED_QUESTION_MAP.has(q.id));
-        const isDefaultStudents =
-          currentSts.length === 60 &&
-          currentClasses.length === 2 &&
-          currentClasses.includes('7A') &&
-          currentClasses.includes('7B');
-        if (isOldDefaultQuestions && isDefaultStudents) {
-          shouldHydrateFromPublished = true;
+        const isLegacyDefault =
+          currentQs.length === 28 &&
+          currentQs.every((q) => q.id.startsWith('kntt_')) &&
+          currentSts.length === 60;
+        if (isLegacyDefault) {
+          shouldHydrateFromSeed = true;
         } else {
-          // Trình duyệt Preview đang chứa dữ liệu thật mà giáo viên đã chỉnh sửa -> đánh dấu và đồng bộ ngay về mã nguồn!
           try {
             localStorage.setItem(KEYS.HAS_LOCAL_EDITS, 'true');
-            if (PUBLISHED_SNAPSHOT.syncId) {
-              localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, PUBLISHED_SNAPSHOT.syncId);
+            if (SEED_SYNC_ID) {
+              localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, SEED_SYNC_ID);
             }
           } catch {
             // ignore
           }
-          shouldHydrateFromPublished = false;
+          shouldHydrateFromSeed = false;
         }
       } else if (
         hasExistingQuestions &&
-        PUBLISHED_SNAPSHOT.syncId &&
-        appliedPublishId !== PUBLISHED_SNAPSHOT.syncId &&
+        SEED_SYNC_ID &&
+        appliedPublishId !== SEED_SYNC_ID &&
         !hasLocalEdits
       ) {
-        shouldHydrateFromPublished = true;
+        shouldHydrateFromSeed = true;
       }
 
-      if (shouldHydrateFromPublished) {
-        safeSetItem(KEYS.QUESTIONS, PUBLISHED_SNAPSHOT.questions || SEED_QUESTIONS);
-        if (Array.isArray(PUBLISHED_SNAPSHOT.students) && PUBLISHED_SNAPSHOT.students.length > 0) {
-          safeSetItem(KEYS.STUDENTS, PUBLISHED_SNAPSHOT.students);
-        }
-        if (Array.isArray(PUBLISHED_SNAPSHOT.classes) && PUBLISHED_SNAPSHOT.classes.length > 0) {
-          safeSetItem(KEYS.CLASSES, PUBLISHED_SNAPSHOT.classes);
-        }
-        if (Array.isArray(PUBLISHED_SNAPSHOT.exams) && PUBLISHED_SNAPSHOT.exams.length > 0) {
-          safeSetItem(KEYS.EXAMS, PUBLISHED_SNAPSHOT.exams);
-        }
-        if (PUBLISHED_SNAPSHOT.config) {
-          safeSetItem(KEYS.CONFIG, { ...DEFAULT_CONFIG, ...PUBLISHED_SNAPSHOT.config });
-        }
-        if (PUBLISHED_SNAPSHOT.papers && Object.keys(PUBLISHED_SNAPSHOT.papers).length > 0) {
-          this.savePapers(PUBLISHED_SNAPSHOT.papers);
-        }
-        if (PUBLISHED_SNAPSHOT.sessions && Object.keys(PUBLISHED_SNAPSHOT.sessions).length > 0) {
-          safeSetItem(KEYS.SESSIONS, PUBLISHED_SNAPSHOT.sessions);
-        }
+      if (shouldHydrateFromSeed) {
+        safeSetItem(KEYS.QUESTIONS, SEED_QUESTIONS);
+        safeSetItem(KEYS.STUDENTS, buildSeedStudents());
+        safeSetItem(KEYS.CLASSES, SEED_CLASSES);
+        safeSetItem(KEYS.EXAMS, SEED_EXAMS);
+        safeSetItem(KEYS.CONFIG, DEFAULT_CONFIG);
         try {
-          if (PUBLISHED_SNAPSHOT.syncId) {
-            localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, PUBLISHED_SNAPSHOT.syncId);
+          if (SEED_SYNC_ID) {
+            localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, SEED_SYNC_ID);
           }
-          if (PUBLISHED_SNAPSHOT.updatedAt) {
-            localStorage.setItem(KEYS.LAST_REPO_SYNC_AT, PUBLISHED_SNAPSHOT.updatedAt);
+          if (SEED_UPDATED_AT) {
+            localStorage.setItem(KEYS.LAST_REPO_SYNC_AT, SEED_UPDATED_AT);
           }
         } catch {
           // ignore
@@ -356,27 +320,22 @@ export class AppStorage {
     }
 
     // 2. Chỉ khởi tạo SEED_QUESTIONS khi ngân hàng câu hỏi hoàn toàn chưa tồn tại.
-    // Tuyệt đối KHÔNG tự ý chèn lại SEED_QUESTIONS khi người dùng đã xóa hoặc chỉnh sửa.
     if (!localStorage.getItem(KEYS.QUESTIONS) && !memoryStore.has(KEYS.QUESTIONS)) {
-      safeSetItem(
-        KEYS.QUESTIONS,
-        hasPublishedSnapshot && PUBLISHED_SNAPSHOT.questions
-          ? PUBLISHED_SNAPSHOT.questions
-          : SEED_QUESTIONS
-      );
+      safeSetItem(KEYS.QUESTIONS, SEED_QUESTIONS);
     } else if (!localStorage.getItem(KEYS.CLEANED_AUTO_SEED)) {
-      // Khắc phục dữ liệu cho người dùng đã nạp PDF riêng (ví dụ: 46 câu #1-#46) nhưng bị phiên bản trước
-      // tự động nối thêm 28 câu mẫu mặc định (kntt_*, từ #47-#74) vào cuối ngân hàng câu hỏi.
+      // Khắc phục dữ liệu cho người dùng đã nạp PDF riêng nhưng bị phiên bản cũ nối thêm 28 câu mẫu kntt_*
       const rawQuestions = safeGetItem<Question[]>(KEYS.QUESTIONS, []);
-      const hasCustomOrPdfQuestions = rawQuestions.some((q) => !SEED_QUESTION_MAP.has(q.id));
-      if (hasCustomOrPdfQuestions) {
+      const hasCustomOrPdfQuestions = rawQuestions.some((q) => !q.id.startsWith('kntt_'));
+      const hasLegacyKnttQuestions = rawQuestions.some((q) => q.id.startsWith('kntt_'));
+      if (hasCustomOrPdfQuestions && hasLegacyKnttQuestions) {
         const removedSeedIds: string[] = [];
         const cleanedQuestions = rawQuestions.filter((q) => {
+          if (!q.id.startsWith('kntt_')) return true;
           const seedQ = SEED_QUESTION_MAP.get(q.id);
-          if (!seedQ) return true; // Giữ nguyên 100% câu hỏi PDF / tự tạo của giáo viên
           const wasEditedByUser =
-            q.content !== seedQ.content ||
-            (q.updatedAt && q.updatedAt !== seedQ.updatedAt && q.updatedAt > '2026-10-30');
+            seedQ &&
+            (q.content !== seedQ.content ||
+              (q.updatedAt && q.updatedAt !== seedQ.updatedAt && q.updatedAt > '2026-10-30'));
           if (!wasEditedByUser) {
             removedSeedIds.push(q.id);
             return false;
@@ -398,36 +357,16 @@ export class AppStorage {
     }
 
     if (!localStorage.getItem(KEYS.STUDENTS) && !memoryStore.has(KEYS.STUDENTS)) {
-      safeSetItem(
-        KEYS.STUDENTS,
-        hasPublishedSnapshot && Array.isArray(PUBLISHED_SNAPSHOT.students)
-          ? PUBLISHED_SNAPSHOT.students
-          : buildSeedStudents()
-      );
+      safeSetItem(KEYS.STUDENTS, buildSeedStudents());
     }
     if (!localStorage.getItem(KEYS.CLASSES) && !memoryStore.has(KEYS.CLASSES)) {
-      safeSetItem(
-        KEYS.CLASSES,
-        hasPublishedSnapshot && Array.isArray(PUBLISHED_SNAPSHOT.classes)
-          ? PUBLISHED_SNAPSHOT.classes
-          : ['7A', '7B']
-      );
+      safeSetItem(KEYS.CLASSES, SEED_CLASSES);
     }
     if (!localStorage.getItem(KEYS.EXAMS) && !memoryStore.has(KEYS.EXAMS)) {
-      safeSetItem(
-        KEYS.EXAMS,
-        hasPublishedSnapshot && Array.isArray(PUBLISHED_SNAPSHOT.exams)
-          ? PUBLISHED_SNAPSHOT.exams
-          : SEED_EXAMS
-      );
+      safeSetItem(KEYS.EXAMS, SEED_EXAMS);
     }
     if (!localStorage.getItem(KEYS.CONFIG) && !memoryStore.has(KEYS.CONFIG)) {
-      safeSetItem(
-        KEYS.CONFIG,
-        hasPublishedSnapshot && PUBLISHED_SNAPSHOT.config
-          ? { ...DEFAULT_CONFIG, ...PUBLISHED_SNAPSHOT.config }
-          : DEFAULT_CONFIG
-      );
+      safeSetItem(KEYS.CONFIG, DEFAULT_CONFIG);
     }
 
     // Tự sinh cấu hình đề và phiên thi cho đề thi đang diễn ra mặc định (để học sinh vào thi được ngay)
@@ -610,7 +549,7 @@ export class AppStorage {
 
   // --- CLASSES ---
   public getClasses(): string[] {
-    const customClasses = safeGetItem<string[]>(KEYS.CLASSES, ['7A', '7B']);
+    const customClasses = safeGetItem<string[]>(KEYS.CLASSES, SEED_CLASSES);
     const students = this.getStudents();
     const studentClasses = students.map((s) => s.className);
     const union = Array.from(new Set([...customClasses, ...studentClasses])).filter(Boolean);
@@ -1008,12 +947,57 @@ export class AppStorage {
     }
     this.repoSyncTimer = setTimeout(() => {
       void this.syncToSourceRepo();
-    }, 150);
+    }, 100);
+  }
+
+  /**
+   * Thực thi lưu và cập nhật ngay lập tức toàn bộ Data vào src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts)
+   * trước khi Giáo viên đăng xuất khỏi tài khoản.
+   */
+  public async flushRepoSyncBeforeLogout(): Promise<{
+    ok: boolean;
+    updatedAt?: string;
+    counts?: { questions: number; classes: number; students: number; exams: number };
+  }> {
+    if (this.repoSyncTimer) {
+      clearTimeout(this.repoSyncTimer);
+      this.repoSyncTimer = null;
+    }
+    return await this.syncToSourceRepo();
+  }
+
+  /**
+   * Đồng bộ khẩn cấp qua sendBeacon / keepalive khi Giáo viên đóng tab trình duyệt đột ngột
+   */
+  public syncViaBeacon(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      const payload = JSON.stringify({
+        config: this.getConfig(),
+        classes: this.getClasses(),
+        questions: this.getQuestions(),
+        students: this.getStudents(),
+        exams: this.getExams(),
+      });
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon('/api/sync-repo-data', blob);
+      } else if (typeof fetch === 'function') {
+        void fetch('/api/sync-repo-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          keepalive: true,
+        });
+      }
+    } catch {
+      // ignore
+    }
   }
 
   /**
    * Đồng bộ toàn bộ dữ liệu hiện hành trên trình duyệt Preview (câu hỏi, lớp, học sinh, đề thi, cấu hình...)
-   * vào trực tiếp file src/data/publishedData.json trong mã nguồn để khi đóng gói / Publish lên GitHub
+   * vào trực tiếp các file trong src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts) để khi đóng gói / Publish lên GitHub
    * luôn có 100% dữ liệu mới nhất.
    */
   public async syncToSourceRepo(): Promise<{
@@ -1030,12 +1014,6 @@ export class AppStorage {
       const students = this.getStudents();
       const exams = this.getExams();
       const config = this.getConfig();
-      const knownIds = new Set(questions.map((q) => q.id));
-      const papers = compactPapersForStorage(
-        safeGetItem<Record<string, StudentExamPaper>>(KEYS.PAPERS, {}),
-        knownIds
-      );
-      const sessions = this.getSessions();
 
       const response = await fetch('/api/sync-repo-data', {
         method: 'POST',
@@ -1048,8 +1026,6 @@ export class AppStorage {
           questions,
           students,
           exams,
-          papers,
-          sessions,
         }),
       });
 
@@ -1082,7 +1058,7 @@ export class AppStorage {
 
   public getLastRepoSyncAt(): string | null {
     if (typeof localStorage === 'undefined') return null;
-    return localStorage.getItem(KEYS.LAST_REPO_SYNC_AT) || PUBLISHED_SNAPSHOT.updatedAt || null;
+    return localStorage.getItem(KEYS.LAST_REPO_SYNC_AT) || SEED_UPDATED_AT || null;
   }
 
   /**

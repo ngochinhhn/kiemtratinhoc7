@@ -24,7 +24,7 @@ interface SystemSettingsViewProps {
   };
   lastRepoSyncAt: string | null;
   onSaveConfig: (config: SystemConfig) => void;
-  onSyncToRepo: () => Promise<boolean>;
+  onSyncToRepo: () => Promise<{ ok: boolean; updatedAt?: string } | boolean>;
   onExportBackup: () => void;
   onImportBackup: (jsonString: string) => boolean;
   onResetDefaults: () => void;
@@ -70,18 +70,19 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
     });
     showBanner(
       'success',
-      'Đã lưu thành công cấu hình hệ thống và đồng bộ vào gói Publish GitHub!'
+      'Đã lưu thành công cấu hình hệ thống và cập nhật vào thư mục Data!'
     );
   };
 
   const handleSyncGithubClick = async () => {
     setIsSyncingRepo(true);
-    const ok = await onSyncToRepo();
+    const res = await onSyncToRepo();
     setIsSyncingRepo(false);
+    const ok = typeof res === 'boolean' ? res : res.ok;
     if (ok) {
       showBanner(
         'success',
-        `Đã đóng gói toàn bộ dữ liệu hiện tại (${stats.questionsCount} câu hỏi, ${stats.classesCount} lớp, ${stats.studentsCount} học sinh, ${stats.examsCount} đề thi) vào mã nguồn để sẵn sàng Publish lên GitHub!`
+        `Đã lưu và cập nhật toàn bộ dữ liệu hiện tại (${stats.questionsCount} câu hỏi, ${stats.classesCount} lớp, ${stats.studentsCount} học sinh, ${stats.examsCount} đề thi) vào thư mục Data (seedQuestions.ts, seedStudents.ts, seedExams.ts)!`
       );
     } else {
       showBanner(
@@ -103,7 +104,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
         if (success) {
           showBanner(
             'success',
-            'Phục hồi dữ liệu từ bản sao lưu thành công và đã đồng bộ vào gói đóng gói GitHub!'
+            'Phục hồi dữ liệu từ bản sao lưu thành công và đã đồng bộ vào thư mục Data!'
           );
         } else {
           showBanner('error', 'Tệp sao lưu không hợp lệ hoặc bị lỗi định dạng!');
@@ -121,10 +122,10 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
         <div>
           <h1 className="text-xl font-bold text-slate-800 flex items-center space-x-2">
             <Settings className="w-5 h-5 text-blue-600" />
-            <span>Cài đặt hệ thống, Đóng gói GitHub &amp; Sao lưu phục hồi</span>
+            <span>Cài đặt hệ thống, Tự động lưu Data &amp; Sao lưu phục hồi</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Tự động đồng bộ toàn bộ dữ liệu đã chỉnh sửa trên Preview vào gói mã nguồn để Publish lên GitHub
+            Tự động lưu và cập nhật trực tiếp thư mục Data (seedQuestions.ts, seedStudents.ts, seedExams.ts) khi thao tác và trước khi đăng xuất
           </p>
         </div>
       </div>
@@ -146,7 +147,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
         </div>
       )}
 
-      {/* ĐỒNG BỘ DỮ LIỆU ĐÓNG GÓI LÊN GITHUB (QUAN TRỌNG) */}
+      {/* TỰ ĐỘNG LƯU VÀ CẬP NHẬT DỮ LIỆU VÀO THƯ MỤC DATA (QUAN TRỌNG) */}
       <div
         data-testid="github-sync-card"
         className="bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 p-6 rounded-xl border border-emerald-300 shadow-sm space-y-4"
@@ -155,10 +156,10 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
           <div className="space-y-1">
             <h2 className="text-base font-extrabold text-slate-900 flex items-center space-x-2">
               <CloudUpload className="w-5 h-5 text-emerald-700" />
-              <span>Đồng bộ dữ liệu Preview vào bản đóng gói Publish GitHub</span>
+              <span>Tự động lưu &amp; cập nhật vào thư mục Data (Publish GitHub)</span>
             </h2>
-            <p className="text-xs text-slate-600">
-              Mọi thay đổi về <strong>Câu hỏi, Lớp, Học sinh, Đề thi</strong> trên chế độ Preview đều được tự động lưu vào file mã nguồn <code>src/data/publishedData.json</code> để khi Publish lên GitHub sẽ giữ nguyên 100% dữ liệu mới nhất của thầy.
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Mỗi khi thầy đăng nhập với vai trò <strong>Giáo viên</strong> và cập nhật <strong>Ngân hàng câu hỏi, Danh sách lớp, Danh sách học sinh, Tạo/Chỉnh sửa đề thi</strong>, hệ thống tự động lưu trực tiếp vào <code>src/data/seedQuestions.ts</code>, <code>src/data/seedStudents.ts</code>, <code>src/data/seedExams.ts</code> và thực hiện lưu đồng bộ <strong>trước khi thoát tài khoản</strong>.
             </p>
           </div>
 
@@ -172,33 +173,33 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
             <RefreshCw className={`w-4 h-4 ${isSyncingRepo ? 'animate-spin' : ''}`} />
             <span>
               {isSyncingRepo
-                ? 'Đang đóng gói dữ liệu...'
-                : 'Cập nhật gói Publish GitHub ngay'}
+                ? 'Đang cập nhật vào Data...'
+                : 'Lưu & Cập nhật vào Data ngay'}
             </span>
           </button>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div className="bg-white/90 border border-emerald-200 rounded-lg p-3">
-            <span className="text-slate-500 block text-[11px]">Ngân hàng câu hỏi</span>
+            <span className="text-slate-500 block text-[11px]">seedQuestions.ts</span>
             <strong className="text-base font-black text-slate-800">
-              {stats.questionsCount} câu
+              {stats.questionsCount} câu hỏi
             </strong>
           </div>
           <div className="bg-white/90 border border-emerald-200 rounded-lg p-3">
-            <span className="text-slate-500 block text-[11px]">Danh sách lớp học</span>
+            <span className="text-slate-500 block text-[11px]">seedStudents.ts (Lớp)</span>
             <strong className="text-base font-black text-slate-800">
-              {stats.classesCount} lớp
+              {stats.classesCount} lớp học
             </strong>
           </div>
           <div className="bg-white/90 border border-emerald-200 rounded-lg p-3">
-            <span className="text-slate-500 block text-[11px]">Danh sách học sinh</span>
+            <span className="text-slate-500 block text-[11px]">seedStudents.ts (HS)</span>
             <strong className="text-base font-black text-slate-800">
               {stats.studentsCount} học sinh
             </strong>
           </div>
           <div className="bg-white/90 border border-emerald-200 rounded-lg p-3">
-            <span className="text-slate-500 block text-[11px]">Đề kiểm tra</span>
+            <span className="text-slate-500 block text-[11px]">seedExams.ts</span>
             <strong className="text-base font-black text-slate-800">
               {stats.examsCount} đề thi
             </strong>
@@ -209,7 +210,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
           <span className="font-semibold flex items-center space-x-1.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
             <span>
-              Trạng thái mã nguồn đóng gói (<code>src/data/publishedData.json</code>): Đã đồng bộ tự động
+              Trạng thái thư mục <code>src/data/</code> (<code>seedQuestions.ts</code>, <code>seedStudents.ts</code>, <code>seedExams.ts</code>): Tự động lưu khi chỉnh sửa &amp; trước khi đăng xuất
             </span>
           </span>
           {lastRepoSyncAt && (

@@ -51,8 +51,31 @@ export default function App() {
   const [isNetSupportOpen, setIsNetSupportOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
+  // Trạng thái đồng bộ trực tiếp vào thư mục src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts)
+  const [lastRepoSyncAt, setLastRepoSyncAt] = useState<string | null>(() =>
+    appStorage.getLastRepoSyncAt()
+  );
+  const [isSyncingData, setIsSyncingData] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
   // Đề thi đang chọn để giám sát / xem kết quả
   const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
+
+  // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/
+  const syncTeacherDataToRepo = async () => {
+    setIsSyncingData(true);
+    try {
+      const res = await appStorage.flushRepoSyncBeforeLogout();
+      if (res.ok && res.updatedAt) {
+        setLastRepoSyncAt(res.updatedAt);
+      } else {
+        setLastRepoSyncAt(appStorage.getLastRepoSyncAt());
+      }
+      return res;
+    } finally {
+      setIsSyncingData(false);
+    }
+  };
 
   // Nạp dữ liệu ban đầu
   const reloadData = () => {
@@ -66,6 +89,7 @@ export default function App() {
     setSessions(appStorage.getSessions());
     const cfg = appStorage.getConfig();
     setConfig(cfg);
+    setLastRepoSyncAt(appStorage.getLastRepoSyncAt());
 
     if (!selectedExamId) {
       const active = exList.find((e) => e.status === 'dang_dien_ra') || exList[0];
@@ -75,14 +99,28 @@ export default function App() {
 
   useEffect(() => {
     reloadData();
+    void syncTeacherDataToRepo();
   }, []);
 
-  // Xử lý đăng nhập Giáo viên
+  // Đảm bảo tự động lưu vào src/data/ trước khi Giáo viên đóng tab hoặc tải lại trang
+  useEffect(() => {
+    if (!isAuthenticated || currentRole !== 'giaovien') return;
+    const handleBeforeUnload = () => {
+      appStorage.syncViaBeacon();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isAuthenticated, currentRole]);
+
+  // Xử lý đăng nhập Giáo viên (Tự động đồng bộ dữ liệu ngay khi đăng nhập với vai trò Giáo viên)
   const handleLoginTeacher = () => {
     setCurrentRole('giaovien');
     setAuthenticatedStudent(null);
     setActiveTab('tongquan');
     setIsAuthenticated(true);
+    void syncTeacherDataToRepo();
   };
 
   // Xử lý đăng nhập Học sinh
@@ -92,29 +130,47 @@ export default function App() {
     setIsAuthenticated(true);
   };
 
-  // Đăng xuất về cửa sổ đăng nhập ban đầu
-  const handleLogout = () => {
+  // Đăng xuất về cửa sổ đăng nhập ban đầu:
+  // Nếu đang ở vai trò Giáo viên, bắt buộc thực hiện lưu & cập nhật toàn bộ Data vào src/data/ TRƯỚC KHI thoát tài khoản
+  const handleLogout = async () => {
+    if (currentRole === 'giaovien') {
+      setIsLoggingOut(true);
+      try {
+        await syncTeacherDataToRepo();
+      } finally {
+        setIsLoggingOut(false);
+      }
+    }
     setIsAuthenticated(false);
     setAuthenticatedStudent(null);
   };
 
-  // Xử lý cập nhật ngân hàng câu hỏi (đồng bộ cả đề thi và phiếu bài làm nếu xóa/chỉnh sửa câu hỏi)
+  // Xử lý cập nhật ngân hàng câu hỏi (đồng bộ cả đề thi, phiếu bài làm và tự động lưu vào src/data/)
   const handleSaveQuestions = (newQuestions: Question[]) => {
     appStorage.saveQuestions(newQuestions);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
-  // Xử lý cập nhật danh sách học sinh
+  // Xử lý cập nhật danh sách học sinh (tự động lưu vào src/data/)
   const handleSaveStudents = (newStudents: Student[]) => {
     appStorage.saveStudents(newStudents);
     setStudents(newStudents);
     setClasses(appStorage.getClasses());
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Tạo lớp mới
   const handleCreateClass = (className: string) => {
     const ok = appStorage.addClass(className);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
     return ok;
   };
 
@@ -122,6 +178,9 @@ export default function App() {
   const handleAddClasses = (classNames: string[]) => {
     const result = appStorage.addClasses(classNames);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
     return result;
   };
 
@@ -129,12 +188,18 @@ export default function App() {
   const handleDeleteClass = (className: string, deleteStudents: boolean) => {
     appStorage.deleteClass(className, deleteStudents);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Xóa hàng loạt học sinh
   const handleBatchDeleteStudents = (studentIds: string[]) => {
     appStorage.batchDeleteStudents(studentIds);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Xử lý cập nhật đề thi
@@ -142,12 +207,18 @@ export default function App() {
     appStorage.saveExams(newExams);
     setExams(newExams);
     setPapers(appStorage.getPapers());
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Xóa đề thi
   const handleDeleteExam = (examId: string) => {
     appStorage.deleteExam(examId);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Mở kỳ thi
@@ -155,18 +226,27 @@ export default function App() {
     appStorage.activateExam(examId);
     reloadData();
     setSelectedExamId(examId);
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Tạm dừng kỳ thi
   const handlePauseExam = (examId: string) => {
     appStorage.pauseExam(examId);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Kết thúc kỳ thi
   const handleFinishExam = (examId: string) => {
     appStorage.finishExam(examId);
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Cập nhật các session (từ giám sát hoặc mô phỏng)
@@ -188,6 +268,9 @@ export default function App() {
   const handleSaveConfig = (newConfig: SystemConfig) => {
     appStorage.saveConfig(newConfig);
     setConfig(newConfig);
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Sao lưu JSON
@@ -205,7 +288,12 @@ export default function App() {
   // Phục hồi JSON
   const handleImportBackup = (jsonString: string) => {
     const success = appStorage.importBackup(jsonString);
-    if (success) reloadData();
+    if (success) {
+      reloadData();
+      if (currentRole === 'giaovien') {
+        void syncTeacherDataToRepo();
+      }
+    }
     return success;
   };
 
@@ -213,6 +301,9 @@ export default function App() {
   const handleResetDefaults = () => {
     appStorage.resetToDefaults();
     reloadData();
+    if (currentRole === 'giaovien') {
+      void syncTeacherDataToRepo();
+    }
   };
 
   // Kỳ thi đang thực sự diễn ra (status === 'dang_dien_ra') cho học sinh và mục Tổng quan
@@ -241,6 +332,12 @@ export default function App() {
           onOpenNetSupportGuide={() => setIsNetSupportOpen(true)}
           onOpenHelpModal={() => setIsHelpModalOpen(true)}
           onLogout={handleLogout}
+          onSyncData={() => {
+            void syncTeacherDataToRepo();
+          }}
+          isSyncingData={isSyncingData}
+          isLoggingOut={isLoggingOut}
+          lastRepoSyncAt={lastRepoSyncAt}
         />
       )}
 
@@ -359,7 +456,15 @@ export default function App() {
               {activeTab === 'caidat' && (
                 <SystemSettingsView
                   config={config}
+                  stats={{
+                    questionsCount: questions.length,
+                    classesCount: classes.length,
+                    studentsCount: students.length,
+                    examsCount: exams.length,
+                  }}
+                  lastRepoSyncAt={lastRepoSyncAt}
                   onSaveConfig={handleSaveConfig}
+                  onSyncToRepo={syncTeacherDataToRepo}
                   onExportBackup={handleExportBackup}
                   onImportBackup={handleImportBackup}
                   onResetDefaults={handleResetDefaults}

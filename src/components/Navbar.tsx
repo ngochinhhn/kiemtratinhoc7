@@ -13,6 +13,8 @@ import {
   PlayCircle,
   LogOut,
   Info,
+  CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import { Role, Student } from '../types';
 
@@ -27,7 +29,11 @@ interface NavbarProps {
   loggedInStudent?: Student | null;
   onOpenNetSupportGuide: () => void;
   onOpenHelpModal: () => void;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
+  onSyncData?: () => void | Promise<void>;
+  isSyncingData?: boolean;
+  isLoggingOut?: boolean;
+  lastRepoSyncAt?: string | null;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -41,6 +47,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenNetSupportGuide,
   onOpenHelpModal,
   onLogout,
+  onSyncData,
+  isSyncingData = false,
+  isLoggingOut = false,
+  lastRepoSyncAt,
 }) => {
   return (
     <header className="bg-blue-800 text-white shadow-md sticky top-0 z-40 border-b border-blue-900">
@@ -89,8 +99,38 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           )}
 
-          {/* Thông tin phiên đăng nhập, nút Trợ giúp & Đăng xuất */}
+          {/* Thông tin phiên đăng nhập, trạng thái tự động lưu Data, nút Trợ giúp & Đăng xuất */}
           <div className="flex items-center space-x-1.5 sm:space-x-2">
+            {/* Nút / Trạng thái tự động lưu Data vào thư mục src/data/ cho Giáo viên */}
+            {currentRole === 'giaovien' && onSyncData && (
+              <button
+                type="button"
+                data-testid="navbar-btn-sync-data"
+                onClick={onSyncData}
+                disabled={isSyncingData || isLoggingOut}
+                className="bg-emerald-700/90 hover:bg-emerald-600 disabled:opacity-75 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg flex items-center space-x-1 border border-emerald-500/80 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
+                title={
+                  lastRepoSyncAt
+                    ? `Tự động lưu vào Data (seedQuestions.ts, seedStudents.ts, seedExams.ts) • Lần cuối: ${new Date(
+                        lastRepoSyncAt
+                      ).toLocaleTimeString('vi-VN')}`
+                    : 'Lưu và cập nhật toàn bộ dữ liệu vào thư mục Data'
+                }
+              >
+                {isSyncingData ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 text-emerald-200 animate-spin shrink-0" />
+                    <span>Đang lưu Data...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                    <span>Đã lưu Data</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {/* Nút Trợ giúp nhanh trên thanh tiêu đề */}
             <button
               type="button"
@@ -126,16 +166,26 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
 
-            {/* Nút Đăng xuất về cửa sổ đăng nhập */}
+            {/* Nút Đăng xuất về cửa sổ đăng nhập (Tự động lưu Data trước khi thoát tài khoản Giáo viên) */}
             <button
               type="button"
               data-testid="navbar-btn-logout"
               onClick={onLogout}
-              className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg flex items-center space-x-1 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
-              title="Đăng xuất khỏi phiên làm việc hiện tại"
+              disabled={isLoggingOut}
+              className="bg-red-600 hover:bg-red-500 disabled:opacity-75 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg flex items-center space-x-1 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
+              title="Tự động lưu cập nhật vào Data và đăng xuất khỏi phiên làm việc"
             >
-              <LogOut className="w-3.5 h-3.5 shrink-0" />
-              <span>Đăng xuất</span>
+              {isLoggingOut ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <span>Đang lưu Data &amp; thoát...</span>
+                </>
+              ) : (
+                <>
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span>Đăng xuất</span>
+                </>
+              )}
             </button>
           </div>
         </div>

@@ -5,32 +5,33 @@ import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 
 /**
- * Plugin đồng bộ dữ liệu trực tiếp từ trình duyệt Preview vào file mã nguồn src/data/publishedData.json
- * để khi giáo viên đóng gói (Build) hoặc Publish lên GitHub, bản đóng gói luôn chứa 100% dữ liệu mới nhất
- * (câu hỏi, lớp, danh sách học sinh, đề thi, cấu hình...) đã thao tác trên Preview.
+ * Plugin tự động lưu và cập nhật trực tiếp phần src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts, publishedData.json)
+ * mỗi khi Giáo viên cập nhật ngân hàng câu hỏi, danh sách lớp, danh sách học sinh, tạo/chỉnh sửa đề thi, cấu hình
+ * và trước khi Giáo viên đăng xuất khỏi tài khoản.
  */
 function repoDataSyncPlugin(): Plugin {
-  const targetFile = path.resolve(__dirname, 'src/data/publishedData.json');
+  const dataDir = path.resolve(__dirname, 'src/data');
+  const seedQuestionsFile = path.join(dataDir, 'seedQuestions.ts');
+  const seedStudentsFile = path.join(dataDir, 'seedStudents.ts');
+  const seedExamsFile = path.join(dataDir, 'seedExams.ts');
 
   return {
     name: 'smarttest7-repo-data-sync',
     configureServer(server) {
       server.middlewares.use('/api/sync-repo-data', (req, res, next) => {
         if (req.method === 'GET') {
-          try {
-            if (fs.existsSync(targetFile)) {
-              const raw = fs.readFileSync(targetFile, 'utf-8');
-              res.setHeader('Content-Type', 'application/json');
-              res.statusCode = 200;
-              res.end(raw);
-              return;
-            }
-          } catch (_err) {
-            // ignore
-          }
           res.setHeader('Content-Type', 'application/json');
           res.statusCode = 200;
-          res.end(JSON.stringify({ ok: false }));
+          res.end(
+            JSON.stringify({
+              ok: true,
+              files: [
+                'src/data/seedQuestions.ts',
+                'src/data/seedStudents.ts',
+                'src/data/seedExams.ts',
+              ],
+            })
+          );
           return;
         }
 
@@ -50,23 +51,52 @@ function repoDataSyncPlugin(): Plugin {
               ) {
                 const nowIso = new Date().toISOString();
                 const syncId = `sync_${Date.now()}`;
-                const snapshot = {
-                  isPublishedSnapshot: true,
-                  syncId,
-                  updatedAt: nowIso,
-                  config: parsed.config || {},
-                  classes: Array.isArray(parsed.classes) ? parsed.classes : [],
-                  questions: parsed.questions,
-                  students: parsed.students,
-                  exams: parsed.exams,
-                  papers: parsed.papers || {},
-                  sessions: parsed.sessions || {},
-                };
-                fs.writeFileSync(
-                  targetFile,
-                  JSON.stringify(snapshot, null, 2),
-                  'utf-8'
-                );
+                const classes: string[] = Array.isArray(parsed.classes)
+                  ? parsed.classes
+                  : Array.from(
+                      new Set(
+                        parsed.students
+                          .map((s: { className?: string }) => s.className)
+                          .filter(Boolean)
+                      )
+                    );
+
+                // 1. Cập nhật trực tiếp src/data/seedQuestions.ts
+                const seedQuestionsContent = `import { Question } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\nexport const SEED_QUESTIONS: Question[] = ${JSON.stringify(
+                  parsed.questions,
+                  null,
+                  2
+                )};\n`;
+                fs.writeFileSync(seedQuestionsFile, seedQuestionsContent, 'utf-8');
+
+                // 2. Cập nhật trực tiếp src/data/seedStudents.ts (bao gồm danh sách lớp SEED_CLASSES và danh sách học sinh)
+                const seedStudentsContent = `import { Student } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\nexport const SEED_CLASSES: string[] = ${JSON.stringify(
+                  classes,
+                  null,
+                  2
+                )};\n\nexport const SEED_STUDENTS: Student[] = ${JSON.stringify(
+                  parsed.students,
+                  null,
+                  2
+                )};\n\nexport function buildSeedStudents(): Student[] {\n  return SEED_STUDENTS.map((s) => ({ ...s }));\n}\n`;
+                fs.writeFileSync(seedStudentsFile, seedStudentsContent, 'utf-8');
+
+                // 3. Cập nhật trực tiếp src/data/seedExams.ts (bao gồm đề thi, cấu hình hệ thống và mốc đồng bộ)
+                const seedExamsContent = `import { Exam, SystemConfig } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\nexport const SEED_SYNC_ID = ${JSON.stringify(
+                  syncId
+                )};\nexport const SEED_UPDATED_AT = ${JSON.stringify(
+                  nowIso
+                )};\n\nexport const SEED_CONFIG: Partial<SystemConfig> = ${JSON.stringify(
+                  parsed.config || {},
+                  null,
+                  2
+                )};\n\nexport const SEED_EXAMS: Exam[] = ${JSON.stringify(
+                  parsed.exams,
+                  null,
+                  2
+                )};\n`;
+                fs.writeFileSync(seedExamsFile, seedExamsContent, 'utf-8');
+
                 res.setHeader('Content-Type', 'application/json');
                 res.statusCode = 200;
                 res.end(
@@ -74,11 +104,16 @@ function repoDataSyncPlugin(): Plugin {
                     ok: true,
                     syncId,
                     updatedAt: nowIso,
+                    filesUpdated: [
+                      'src/data/seedQuestions.ts',
+                      'src/data/seedStudents.ts',
+                      'src/data/seedExams.ts',
+                    ],
                     counts: {
-                      questions: snapshot.questions.length,
-                      classes: snapshot.classes.length,
-                      students: snapshot.students.length,
-                      exams: snapshot.exams.length,
+                      questions: parsed.questions.length,
+                      classes: classes.length,
+                      students: parsed.students.length,
+                      exams: parsed.exams.length,
                     },
                   })
                 );
@@ -127,7 +162,11 @@ export default defineConfig(() => {
         process.env.DISABLE_HMR === 'true'
           ? null
           : {
-              ignored: ['**/src/data/publishedData.json'],
+              ignored: [
+                '**/src/data/seedQuestions.ts',
+                '**/src/data/seedStudents.ts',
+                '**/src/data/seedExams.ts',
+              ],
             },
     },
   };

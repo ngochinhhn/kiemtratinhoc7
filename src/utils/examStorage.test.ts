@@ -101,56 +101,46 @@ describe('examStorage operations', () => {
     assert.strictEqual(storage.getPapers()['student1_exam_to_delete'], undefined);
   });
 
-  it('never re-adds deleted questions on ensureInitialized and cleans auto-appended seed questions (#47-#74)', () => {
+  it('never re-adds deleted questions on ensureInitialized and cleans auto-appended legacy kntt_ seed questions', () => {
     const storage = AppStorage.getInstance();
     storage.resetToDefaults();
 
-    // Simulate user importing 46 PDF questions (#1 - #46) and having 28 SEED_QUESTIONS (#47 - #74) appended
-    const pdfQuestions = Array.from({ length: 46 }, (_, i) => ({
-      id: `pdf_q_${i + 1}`,
+    const seedQuestions = storage.getQuestions();
+    assert.strictEqual(seedQuestions.length, 46);
+
+    // Simulate legacy kntt_ questions accidentally appended after PDF questions
+    const legacyKnttQuestions = Array.from({ length: 5 }, (_, i) => ({
+      id: `kntt_c1_b1_0${i + 1}`,
       themeId: 'chu_de_1',
       themeName: 'Chủ đề 1: Máy tính và cộng đồng',
       lessonId: 'bai_1',
       lessonName: 'Bài 1: Thiết bị vào - ra',
-      content: `Câu hỏi PDF số ${i + 1} (đã chỉnh sửa)`,
+      content: `Câu hỏi mẫu cũ ${i + 1}`,
       options: [
-        { id: `opt_${i}_a`, label: 'A' as const, content: 'Phương án A' },
-        { id: `opt_${i}_b`, label: 'B' as const, content: 'Phương án B' },
-        { id: `opt_${i}_c`, label: 'C' as const, content: 'Phương án C' },
-        { id: `opt_${i}_d`, label: 'D' as const, content: 'Phương án D' },
+        { id: `opt_k_${i}_a`, label: 'A' as const, content: 'Phương án A' },
+        { id: `opt_k_${i}_b`, label: 'B' as const, content: 'Phương án B' },
+        { id: `opt_k_${i}_c`, label: 'C' as const, content: 'Phương án C' },
+        { id: `opt_k_${i}_d`, label: 'D' as const, content: 'Phương án D' },
       ],
-      correctOptionId: `opt_${i}_a`,
+      correctOptionId: `opt_k_${i}_a`,
       cognitiveLevel: 'nhan_biet' as const,
       reviewStatus: 'da_kiem_duyet' as const,
-      sourcePage: 1,
-      sourceBook: 'Cau_hoi_chu_de_1-3.pdf',
-      createdAt: '2026-11-01',
-      updatedAt: '2026-11-01',
+      createdAt: '2026-10-29',
+      updatedAt: '2026-10-29',
     }));
 
-    const seedQuestions = storage.getQuestions();
-    assert.strictEqual(seedQuestions.length, 28);
-
-    // Simulate contaminated state with 46 PDF questions + 28 seed questions = 74 questions
-    globalThis.localStorage.removeItem('smarttest7_cleaned_auto_seed_v1');
-    globalThis.localStorage.setItem(
-      'smarttest7_questions_v1',
-      JSON.stringify([...pdfQuestions, ...seedQuestions])
-    );
-
-    // Clear memory cache by re-running ensureInitialized after reset simulation
-    storage.saveQuestions([...pdfQuestions, ...seedQuestions]);
+    storage.saveQuestions([...seedQuestions, ...legacyKnttQuestions]);
     globalThis.localStorage.removeItem('smarttest7_cleaned_auto_seed_v1');
     globalThis.localStorage.removeItem('smarttest7_deleted_qids_v1');
     storage.ensureInitialized();
 
     const afterCleanup = storage.getQuestions();
     assert.strictEqual(afterCleanup.length, 46);
-    assert.ok(afterCleanup.every((q) => q.id.startsWith('pdf_q_')));
+    assert.ok(afterCleanup.every((q) => !q.id.startsWith('kntt_')));
 
     // Now delete 6 unsuitable questions and edit question #1
     const editedAndFiltered = afterCleanup.slice(0, 40).map((q, idx) =>
-      idx === 0 ? { ...q, content: 'Câu hỏi PDF số 1 đã được giáo viên sửa nội dung' } : q
+      idx === 0 ? { ...q, content: 'Câu hỏi số 1 đã được giáo viên sửa nội dung' } : q
     );
     storage.saveQuestions(editedAndFiltered);
 
@@ -160,7 +150,60 @@ describe('examStorage operations', () => {
     assert.strictEqual(finalQuestions.length, 40);
     assert.strictEqual(
       finalQuestions[0].content,
-      'Câu hỏi PDF số 1 đã được giáo viên sửa nội dung'
+      'Câu hỏi số 1 đã được giáo viên sửa nội dung'
     );
+  });
+
+  it('flushRepoSyncBeforeLogout sends current questions, classes, students, exams, and config to /api/sync-repo-data', async () => {
+    const storage = AppStorage.getInstance();
+    storage.resetToDefaults();
+
+    let capturedPayload: Record<string, unknown> | null = null;
+    const prevWindow = (globalThis as Record<string, unknown>).window;
+    const prevFetch = globalThis.fetch;
+
+    try {
+      (globalThis as Record<string, unknown>).window = { document: {} };
+      globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.body) {
+          capturedPayload = JSON.parse(init.body as string);
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            syncId: 'sync_test_logout',
+            updatedAt: '2026-11-02T15:30:00.000Z',
+            counts: {
+              questions: 46,
+              classes: 5,
+              students: 225,
+              exams: 7,
+            },
+          }),
+        } as Response;
+      }) as typeof fetch;
+
+      storage.addClass('7A11');
+      const result = await storage.flushRepoSyncBeforeLogout();
+
+      assert.strictEqual(result.ok, true);
+      assert.strictEqual(result.updatedAt, '2026-11-02T15:30:00.000Z');
+      assert.ok(capturedPayload);
+      assert.ok(Array.isArray((capturedPayload as { classes: string[] }).classes));
+      assert.ok((capturedPayload as { classes: string[] }).classes.includes('7A11'));
+      assert.strictEqual(
+        (capturedPayload as { questions: unknown[] }).questions.length,
+        46
+      );
+      assert.strictEqual(
+        (capturedPayload as { students: unknown[] }).students.length,
+        225
+      );
+      assert.strictEqual((capturedPayload as { exams: unknown[] }).exams.length, 7);
+    } finally {
+      (globalThis as Record<string, unknown>).window = prevWindow;
+      globalThis.fetch = prevFetch;
+    }
   });
 });
