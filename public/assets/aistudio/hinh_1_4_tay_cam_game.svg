@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 175" width="260" height="175">
+  <rect width="260" height="175" fill="#ffffff"/>
+  <g transform="translate(30, 12)">
+    <!-- Dây cáp -->
+    <path d="M 100 28 C 100 10, 125 10, 125 0" fill="none" stroke="#334155" stroke-width="3"/>
+    <!-- Thân tay cầm game -->
+    <path d="M 45 30 L 155 30 C 182 30, 195 55, 190 95 C 187 115, 170 120, 155 102 L 138 82 L 62 82 L 45 102 C 30 120, 13 115, 10 95 C 5 55, 18 30, 45 30 Z" fill="#1e293b" stroke="#0f172a" stroke-width="2.5"/>
+    <!-- Cụm phím điều hướng D-Pad bên trái -->
+    <rect x="36" y="48" width="10" height="26" rx="2" fill="#94a3b8"/>
+    <rect x="28" y="56" width="26" height="10" rx="2" fill="#94a3b8"/>
+    <!-- Hai cần điều khiển Analog -->
+    <circle cx="72" cy="72" r="11" fill="#334155" stroke="#64748b" stroke-width="2"/>
+    <circle cx="128" cy="72" r="11" fill="#334155" stroke="#64748b" stroke-width="2"/>
+    <!-- Các nút bấm điều khiển bên phải -->
+    <circle cx="158" cy="46" r="5" fill="#eab308"/>
+    <circle cx="158" cy="68" r="5" fill="#22c55e"/>
+    <circle cx="147" cy="57" r="5" fill="#3b82f6"/>
+    <circle cx="169" cy="57" r="5" fill="#ef4444"/>
+    <!-- Nút Start / Select ở giữa -->
+    <rect x="88" y="48" width="9" height="4" rx="2" fill="#64748b"/>
+    <rect x="103" y="48" width="9" height="4" rx="2" fill="#64748b"/>
+  </g>
+  <text x="130" y="156" font-family="Arial, sans-serif" font-size="15" font-style="italic" fill="#334155" text-anchor="middle">Hình 1.4. Bộ điều khiển game</text>
+</svg>

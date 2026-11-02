@@ -1,0 +1,6 @@
+{
+  "name": "SMART TEST 7 – Hệ thống thi trắc nghiệm môn Tin học 7",
+  "description": "Hệ thống thi trắc nghiệm trực tuyến môn Tin học 7 - Bộ sách Kết nối tri thức với cuộc sống. Hỗ trợ phòng máy LAN và NetSupport School.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

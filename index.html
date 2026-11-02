@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SMART TEST 7 – Hệ thống thi trắc nghiệm môn Tin học 7</title>
+    <meta name="description" content="Hệ thống thi trắc nghiệm trực tuyến môn Tin học 7 - Bộ sách Kết nối tri thức với cuộc sống. Hỗ trợ phòng máy LAN và NetSupport School." />
+    <meta property="og:title" content="SMART TEST 7 – Hệ thống thi trắc nghiệm môn Tin học 7" />
+    <meta property="og:description" content="Hệ thống thi trắc nghiệm trực tuyến môn Tin học 7 - Bộ sách Kết nối tri thức với cuộc sống. Hỗ trợ phòng máy LAN và NetSupport School." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function () {
+        try {
+          var origDefineProperty = Object.defineProperty;
+          var origReflectDefineProperty =
+            typeof Reflect !== 'undefined' && Reflect.defineProperty
+              ? Reflect.defineProperty
+              : null;
+
+          function patchDescriptor(target, prop, descriptor) {
+            if (!descriptor || typeof descriptor !== 'object') {
+              return descriptor;
+            }
+            var isWindowTarget =
+              target === window ||
+              target === globalThis ||
+              (typeof Window !== 'undefined' && target === Window.prototype);
+
+            if (
+              isWindowTarget &&
+              typeof descriptor.get === 'function' &&
+              typeof descriptor.set !== 'function'
+            ) {
+              var originalGetter = descriptor.get;
+              var overriddenValue = undefined;
+              var hasOverriddenValue = false;
+              return {
+                configurable: true,
+                enumerable: descriptor.enumerable !== false,
+                get: function () {
+                  return hasOverriddenValue
+                    ? overriddenValue
+                    : originalGetter.call(this);
+                },
+                set: function (val) {
+                  if (typeof val === 'function' || val !== undefined) {
+                    overriddenValue = val;
+                    hasOverriddenValue = true;
+                  }
+                },
+              };
+            }
+
+            if (
+              typeof target === 'function' &&
+              'value' in descriptor &&
+              descriptor.configurable === undefined
+            ) {
+              return {
+                configurable: true,
+                writable:
+                  descriptor.writable !== undefined ? descriptor.writable : true,
+                enumerable: Boolean(descriptor.enumerable),
+                value: descriptor.value,
+              };
+            }
+
+            return descriptor;
+          }
+
+          Object.defineProperty = function (target, prop, descriptor) {
+            return origDefineProperty.call(
+              this,
+              target,
+              prop,
+              patchDescriptor(target, prop, descriptor)
+            );
+          };
+
+          if (origReflectDefineProperty) {
+            Reflect.defineProperty = function (target, prop, descriptor) {
+              return origReflectDefineProperty.call(
+                this,
+                target,
+                prop,
+                patchDescriptor(target, prop, descriptor)
+              );
+            };
+          }
+
+          // If window.fetch was already made getter-only before this script ran, make it writable
+          var winDesc = origDefineProperty
+            ? Object.getOwnPropertyDescriptor(window, 'fetch')
+            : null;
+          if (winDesc && winDesc.get && !winDesc.set && winDesc.configurable !== false) {
+            Object.defineProperty(window, 'fetch', winDesc);
+          }
+
+          // Prevent third-party browser extension errors (chrome-extension://) from triggering app error overlays
+          window.addEventListener(
+            'error',
+            function (event) {
+              var src = String((event && event.filename) || '');
+              var msg = String((event && event.message) || '');
+              var stack = String(
+                (event && event.error && event.error.stack) || ''
+              );
+              if (
+                src.indexOf('chrome-extension://') === 0 ||
+                stack.indexOf('chrome-extension://') !== -1 ||
+                msg.indexOf('Cannot set property fetch') !== -1
+              ) {
+                event.stopImmediatePropagation();
+                event.preventDefault();
+              }
+            },
+            true
+          );
+        } catch (_e) {
+          // Ignore environment restrictions
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
