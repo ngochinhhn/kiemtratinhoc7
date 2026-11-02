@@ -9,6 +9,7 @@ import {
 import { SEED_QUESTIONS } from '../data/seedQuestions';
 import { buildSeedStudents } from '../data/seedStudents';
 import { SEED_EXAMS } from '../data/seedExams';
+import publishedDataRaw from '../data/publishedData.json';
 import { createStudentExamPaper } from './examShuffler';
 import { gradeStudentExam, normalizeQuestionStructure } from './grading';
 
@@ -22,7 +23,25 @@ const KEYS = {
   PAPERS: 'smarttest7_papers_v1',
   SESSIONS: 'smarttest7_sessions_v1',
   CONFIG: 'smarttest7_config_v1',
+  APPLIED_PUBLISH_ID: 'smarttest7_applied_publish_id_v1',
+  HAS_LOCAL_EDITS: 'smarttest7_has_local_edits_v1',
+  LAST_REPO_SYNC_AT: 'smarttest7_last_repo_sync_at_v1',
 };
+
+interface PublishedSnapshot {
+  isPublishedSnapshot?: boolean;
+  syncId?: string;
+  updatedAt?: string;
+  config?: SystemConfig;
+  classes?: string[];
+  questions?: Question[];
+  students?: Student[];
+  exams?: Exam[];
+  papers?: Record<string, StudentExamPaper>;
+  sessions?: Record<string, StudentExamSession>;
+}
+
+const PUBLISHED_SNAPSHOT = (publishedDataRaw || {}) as unknown as PublishedSnapshot;
 
 const SEED_QUESTION_MAP = new Map<string, Question>(
   SEED_QUESTIONS.map((sq) => [sq.id, sq])
@@ -246,10 +265,105 @@ export class AppStorage {
       }
     }
 
+    const isBrowserEnv =
+      typeof window !== 'undefined' && typeof window.document !== 'undefined';
+    const hasPublishedSnapshot =
+      isBrowserEnv &&
+      Boolean(PUBLISHED_SNAPSHOT?.isPublishedSnapshot) &&
+      Array.isArray(PUBLISHED_SNAPSHOT.questions) &&
+      PUBLISHED_SNAPSHOT.questions.length > 0;
+
+    // Nếu mở trên trình duyệt mới (như GitHub Pages) hoặc bản đóng gói có syncId mới và máy chưa có chỉnh sửa cục bộ
+    const appliedPublishId = localStorage.getItem(KEYS.APPLIED_PUBLISH_ID);
+    const hasLocalEdits = localStorage.getItem(KEYS.HAS_LOCAL_EDITS) === 'true';
+    const hasExistingQuestions =
+      Boolean(localStorage.getItem(KEYS.QUESTIONS)) || memoryStore.has(KEYS.QUESTIONS);
+
+    if (
+      hasPublishedSnapshot &&
+      (!hasExistingQuestions ||
+        (PUBLISHED_SNAPSHOT.syncId &&
+          appliedPublishId !== PUBLISHED_SNAPSHOT.syncId &&
+          !hasLocalEdits))
+    ) {
+      // Nếu trình duyệt đã có dữ liệu từ trước khi có cơ chế HAS_LOCAL_EDITS, kiểm tra xem người dùng đã chỉnh sửa gì chưa
+      let shouldHydrateFromPublished = !hasExistingQuestions;
+      if (hasExistingQuestions && !appliedPublishId) {
+        const currentQs = safeGetItem<Question[]>(KEYS.QUESTIONS, []);
+        const currentSts = safeGetItem<Student[]>(KEYS.STUDENTS, []);
+        const currentClasses = safeGetItem<string[]>(KEYS.CLASSES, ['7A', '7B']);
+        const isOldDefaultQuestions =
+          currentQs.length === 28 && currentQs.every((q) => SEED_QUESTION_MAP.has(q.id));
+        const isDefaultStudents =
+          currentSts.length === 60 &&
+          currentClasses.length === 2 &&
+          currentClasses.includes('7A') &&
+          currentClasses.includes('7B');
+        if (isOldDefaultQuestions && isDefaultStudents) {
+          shouldHydrateFromPublished = true;
+        } else {
+          // Trình duyệt Preview đang chứa dữ liệu thật mà giáo viên đã chỉnh sửa -> đánh dấu và đồng bộ ngay về mã nguồn!
+          try {
+            localStorage.setItem(KEYS.HAS_LOCAL_EDITS, 'true');
+            if (PUBLISHED_SNAPSHOT.syncId) {
+              localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, PUBLISHED_SNAPSHOT.syncId);
+            }
+          } catch {
+            // ignore
+          }
+          shouldHydrateFromPublished = false;
+        }
+      } else if (
+        hasExistingQuestions &&
+        PUBLISHED_SNAPSHOT.syncId &&
+        appliedPublishId !== PUBLISHED_SNAPSHOT.syncId &&
+        !hasLocalEdits
+      ) {
+        shouldHydrateFromPublished = true;
+      }
+
+      if (shouldHydrateFromPublished) {
+        safeSetItem(KEYS.QUESTIONS, PUBLISHED_SNAPSHOT.questions || SEED_QUESTIONS);
+        if (Array.isArray(PUBLISHED_SNAPSHOT.students) && PUBLISHED_SNAPSHOT.students.length > 0) {
+          safeSetItem(KEYS.STUDENTS, PUBLISHED_SNAPSHOT.students);
+        }
+        if (Array.isArray(PUBLISHED_SNAPSHOT.classes) && PUBLISHED_SNAPSHOT.classes.length > 0) {
+          safeSetItem(KEYS.CLASSES, PUBLISHED_SNAPSHOT.classes);
+        }
+        if (Array.isArray(PUBLISHED_SNAPSHOT.exams) && PUBLISHED_SNAPSHOT.exams.length > 0) {
+          safeSetItem(KEYS.EXAMS, PUBLISHED_SNAPSHOT.exams);
+        }
+        if (PUBLISHED_SNAPSHOT.config) {
+          safeSetItem(KEYS.CONFIG, { ...DEFAULT_CONFIG, ...PUBLISHED_SNAPSHOT.config });
+        }
+        if (PUBLISHED_SNAPSHOT.papers && Object.keys(PUBLISHED_SNAPSHOT.papers).length > 0) {
+          this.savePapers(PUBLISHED_SNAPSHOT.papers);
+        }
+        if (PUBLISHED_SNAPSHOT.sessions && Object.keys(PUBLISHED_SNAPSHOT.sessions).length > 0) {
+          safeSetItem(KEYS.SESSIONS, PUBLISHED_SNAPSHOT.sessions);
+        }
+        try {
+          if (PUBLISHED_SNAPSHOT.syncId) {
+            localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, PUBLISHED_SNAPSHOT.syncId);
+          }
+          if (PUBLISHED_SNAPSHOT.updatedAt) {
+            localStorage.setItem(KEYS.LAST_REPO_SYNC_AT, PUBLISHED_SNAPSHOT.updatedAt);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     // 2. Chỉ khởi tạo SEED_QUESTIONS khi ngân hàng câu hỏi hoàn toàn chưa tồn tại.
     // Tuyệt đối KHÔNG tự ý chèn lại SEED_QUESTIONS khi người dùng đã xóa hoặc chỉnh sửa.
     if (!localStorage.getItem(KEYS.QUESTIONS) && !memoryStore.has(KEYS.QUESTIONS)) {
-      safeSetItem(KEYS.QUESTIONS, SEED_QUESTIONS);
+      safeSetItem(
+        KEYS.QUESTIONS,
+        hasPublishedSnapshot && PUBLISHED_SNAPSHOT.questions
+          ? PUBLISHED_SNAPSHOT.questions
+          : SEED_QUESTIONS
+      );
     } else if (!localStorage.getItem(KEYS.CLEANED_AUTO_SEED)) {
       // Khắc phục dữ liệu cho người dùng đã nạp PDF riêng (ví dụ: 46 câu #1-#46) nhưng bị phiên bản trước
       // tự động nối thêm 28 câu mẫu mặc định (kntt_*, từ #47-#74) vào cuối ngân hàng câu hỏi.
@@ -284,13 +398,36 @@ export class AppStorage {
     }
 
     if (!localStorage.getItem(KEYS.STUDENTS) && !memoryStore.has(KEYS.STUDENTS)) {
-      safeSetItem(KEYS.STUDENTS, buildSeedStudents());
+      safeSetItem(
+        KEYS.STUDENTS,
+        hasPublishedSnapshot && Array.isArray(PUBLISHED_SNAPSHOT.students)
+          ? PUBLISHED_SNAPSHOT.students
+          : buildSeedStudents()
+      );
+    }
+    if (!localStorage.getItem(KEYS.CLASSES) && !memoryStore.has(KEYS.CLASSES)) {
+      safeSetItem(
+        KEYS.CLASSES,
+        hasPublishedSnapshot && Array.isArray(PUBLISHED_SNAPSHOT.classes)
+          ? PUBLISHED_SNAPSHOT.classes
+          : ['7A', '7B']
+      );
     }
     if (!localStorage.getItem(KEYS.EXAMS) && !memoryStore.has(KEYS.EXAMS)) {
-      safeSetItem(KEYS.EXAMS, SEED_EXAMS);
+      safeSetItem(
+        KEYS.EXAMS,
+        hasPublishedSnapshot && Array.isArray(PUBLISHED_SNAPSHOT.exams)
+          ? PUBLISHED_SNAPSHOT.exams
+          : SEED_EXAMS
+      );
     }
     if (!localStorage.getItem(KEYS.CONFIG) && !memoryStore.has(KEYS.CONFIG)) {
-      safeSetItem(KEYS.CONFIG, DEFAULT_CONFIG);
+      safeSetItem(
+        KEYS.CONFIG,
+        hasPublishedSnapshot && PUBLISHED_SNAPSHOT.config
+          ? { ...DEFAULT_CONFIG, ...PUBLISHED_SNAPSHOT.config }
+          : DEFAULT_CONFIG
+      );
     }
 
     // Tự sinh cấu hình đề và phiên thi cho đề thi đang diễn ra mặc định (để học sinh vào thi được ngay)
@@ -452,6 +589,7 @@ export class AppStorage {
 
     safeSetItem(KEYS.QUESTIONS, normalizedQuestions);
     this.syncExamsAndPapersWithQuestionBank(normalizedQuestions, new Set(removedIds));
+    this.markLocalEditAndSync();
   }
 
   // --- STUDENTS ---
@@ -461,6 +599,7 @@ export class AppStorage {
 
   public saveStudents(students: Student[]): void {
     safeSetItem(KEYS.STUDENTS, students);
+    this.markLocalEditAndSync();
   }
 
   public batchDeleteStudents(studentIds: string[]): void {
@@ -480,6 +619,7 @@ export class AppStorage {
 
   public saveClasses(classes: string[]): void {
     safeSetItem(KEYS.CLASSES, classes);
+    this.markLocalEditAndSync();
   }
 
   public addClass(className: string): boolean {
@@ -575,6 +715,7 @@ export class AppStorage {
     if (papersChanged) {
       this.savePapers(papers);
     }
+    this.markLocalEditAndSync();
   }
 
   public deleteExam(examId: string): void {
@@ -669,6 +810,7 @@ export class AppStorage {
 
   public saveConfig(config: SystemConfig): void {
     safeSetItem(KEYS.CONFIG, config);
+    this.markLocalEditAndSync();
   }
 
   // --- ACTIONS ---
@@ -838,14 +980,109 @@ export class AppStorage {
       safeSetItem(KEYS.QUESTIONS, data.questions);
       safeSetItem(KEYS.STUDENTS, data.students);
       safeSetItem(KEYS.EXAMS, data.exams);
+      if (data.classes) safeSetItem(KEYS.CLASSES, data.classes);
       if (data.papers) this.savePapers(data.papers);
       if (data.sessions) safeSetItem(KEYS.SESSIONS, data.sessions);
       if (data.config) safeSetItem(KEYS.CONFIG, data.config);
+      this.markLocalEditAndSync();
       return true;
     } catch (e) {
       console.error('Lỗi phục hồi bản sao lưu:', e);
       return false;
     }
+  }
+
+  private repoSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private markLocalEditAndSync(): void {
+    if (typeof window === 'undefined' || typeof window.document === 'undefined') {
+      return;
+    }
+    try {
+      localStorage.setItem(KEYS.HAS_LOCAL_EDITS, 'true');
+    } catch {
+      // ignore
+    }
+    if (this.repoSyncTimer) {
+      clearTimeout(this.repoSyncTimer);
+    }
+    this.repoSyncTimer = setTimeout(() => {
+      void this.syncToSourceRepo();
+    }, 150);
+  }
+
+  /**
+   * Đồng bộ toàn bộ dữ liệu hiện hành trên trình duyệt Preview (câu hỏi, lớp, học sinh, đề thi, cấu hình...)
+   * vào trực tiếp file src/data/publishedData.json trong mã nguồn để khi đóng gói / Publish lên GitHub
+   * luôn có 100% dữ liệu mới nhất.
+   */
+  public async syncToSourceRepo(): Promise<{
+    ok: boolean;
+    updatedAt?: string;
+    counts?: { questions: number; classes: number; students: number; exams: number };
+  }> {
+    if (typeof window === 'undefined' || typeof fetch === 'undefined') {
+      return { ok: false };
+    }
+    try {
+      const questions = this.getQuestions();
+      const classes = this.getClasses();
+      const students = this.getStudents();
+      const exams = this.getExams();
+      const config = this.getConfig();
+      const knownIds = new Set(questions.map((q) => q.id));
+      const papers = compactPapersForStorage(
+        safeGetItem<Record<string, StudentExamPaper>>(KEYS.PAPERS, {}),
+        knownIds
+      );
+      const sessions = this.getSessions();
+
+      const response = await fetch('/api/sync-repo-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          config,
+          classes,
+          questions,
+          students,
+          exams,
+          papers,
+          sessions,
+        }),
+      });
+
+      if (!response.ok) {
+        return { ok: false };
+      }
+      const resData = await response.json();
+      if (resData && resData.ok) {
+        try {
+          if (resData.syncId) {
+            localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, resData.syncId);
+          }
+          if (resData.updatedAt) {
+            localStorage.setItem(KEYS.LAST_REPO_SYNC_AT, resData.updatedAt);
+          }
+        } catch {
+          // ignore
+        }
+        return {
+          ok: true,
+          updatedAt: resData.updatedAt,
+          counts: resData.counts,
+        };
+      }
+      return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  public getLastRepoSyncAt(): string | null {
+    if (typeof localStorage === 'undefined') return null;
+    return localStorage.getItem(KEYS.LAST_REPO_SYNC_AT) || PUBLISHED_SNAPSHOT.updatedAt || null;
   }
 
   /**
@@ -858,10 +1095,13 @@ export class AppStorage {
       localStorage.removeItem(KEYS.DELETED_QUESTION_IDS);
       localStorage.removeItem(KEYS.CLEANED_AUTO_SEED);
       localStorage.removeItem(KEYS.STUDENTS);
+      localStorage.removeItem(KEYS.CLASSES);
       localStorage.removeItem(KEYS.EXAMS);
       localStorage.removeItem(KEYS.PAPERS);
       localStorage.removeItem(KEYS.SESSIONS);
       localStorage.removeItem(KEYS.CONFIG);
+      localStorage.removeItem(KEYS.APPLIED_PUBLISH_ID);
+      localStorage.removeItem(KEYS.HAS_LOCAL_EDITS);
     }
     this.ensureInitialized();
   }
