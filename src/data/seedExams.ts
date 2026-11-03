@@ -1,8 +1,8 @@
 import { Exam, SystemConfig } from '../types';
 
-// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-02T15:58:26.780Z
-export const SEED_SYNC_ID = "sync_1793635106780";
-export const SEED_UPDATED_AT = "2026-11-02T15:58:26.780Z";
+// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T00:58:35.949Z
+export const SEED_SYNC_ID = "sync_1793667515949";
+export const SEED_UPDATED_AT = "2026-11-03T00:58:35.949Z";
 
 export const SEED_CONFIG: Partial<SystemConfig> = {
   "serverIp": "192.168.1.15",

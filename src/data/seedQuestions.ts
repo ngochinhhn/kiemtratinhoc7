@@ -1,6 +1,6 @@
 import { Question } from '../types';
 
-// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-02T15:58:26.780Z
+// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T00:58:35.949Z
 export const SEED_QUESTIONS: Question[] = [
   {
     "id": "manual_1793518905656",
@@ -1884,7 +1884,7 @@ export const SEED_QUESTIONS: Question[] = [
       {
         "id": "opt_1793437071766_43_b_1",
         "label": "B",
-        "content": "Không nháy chuột vào các thông tin quảng cáo gây tò mò, gi���t gân, dụ dỗ kiếm tiền."
+        "content": "Không nháy chuột vào các thông tin quảng cáo gây tò mò, gi��t gân, dụ dỗ kiếm tiền."
       },
       {
         "id": "opt_1793437071766_43_c_2",
