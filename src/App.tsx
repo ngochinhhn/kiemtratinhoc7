@@ -18,24 +18,60 @@ import { ExamMonitoringView } from './components/ExamMonitoringView';
 import { ResultsView } from './components/ResultsView';
 import { SystemSettingsView } from './components/SystemSettingsView';
 import { StudentExamView } from './components/StudentExamView';
-import { NetSupportGuideModal } from './components/NetSupportGuideModal';
 import { LoginView } from './components/LoginView';
 import { HelpView } from './components/HelpView';
-import { getActiveRunningExam } from './utils/auth';
+import { getActiveRunningExam, getActiveRunningExams } from './utils/auth';
+
+const ACTIVE_STUDENT_STORAGE_KEY = 'smarttest7_active_student_v1';
+const ACTIVE_STUDENT_EXAM_ID_KEY = 'smarttest7_active_student_exam_id_v1';
 
 export default function App() {
-  // Kiểm tra trạng thái đăng nhập ban đầu (hỗ trợ ?autostart=1 nếu cần kiểm thử nhanh)
+  // Đọc phiên học sinh đang thi trực tuyến nếu trình duyệt bị tải lại khi rớt mạng
+  const initialSavedStudent = (() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = window.sessionStorage.getItem(ACTIVE_STUDENT_STORAGE_KEY);
+        if (raw) {
+          return JSON.parse(raw) as Student;
+        }
+      } catch (_e) {
+        // ignore
+      }
+    }
+    return null;
+  })();
+
+  const initialSavedStudentExamId = (() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return window.sessionStorage.getItem(ACTIVE_STUDENT_EXAM_ID_KEY) || null;
+      } catch (_e) {
+        // ignore
+      }
+    }
+    return null;
+  })();
+
+  // Kiểm tra trạng thái đăng nhập ban đầu (hỗ trợ ?autostart=1 hoặc khôi phục phiên học sinh đang thi)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      return params.get('autostart') === '1';
+      if (params.get('autostart') === '1') return true;
+      if (initialSavedStudent) return true;
     }
     return false;
   });
 
   // Vai trò: 'giaovien' (Giáo viên quản lý) hoặc 'hocsinh' (Học sinh làm bài)
-  const [currentRole, setCurrentRole] = useState<Role>('giaovien');
-  const [authenticatedStudent, setAuthenticatedStudent] = useState<Student | null>(null);
+  const [currentRole, setCurrentRole] = useState<Role>(() =>
+    initialSavedStudent ? 'hocsinh' : 'giaovien'
+  );
+  const [authenticatedStudent, setAuthenticatedStudent] = useState<Student | null>(
+    initialSavedStudent
+  );
+  const [studentChosenExamId, setStudentChosenExamId] = useState<string | null>(
+    initialSavedStudentExamId
+  );
   const [activeTab, setActiveTab] = useState<string>('tongquan');
 
   // Dữ liệu ứng dụng
@@ -47,8 +83,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<string, StudentExamSession>>({});
   const [config, setConfig] = useState<SystemConfig>(appStorage.getConfig());
 
-  // Modal hướng dẫn NetSupport School & Modal Trợ giúp
-  const [isNetSupportOpen, setIsNetSupportOpen] = useState(false);
+  // Modal Trợ giúp
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
   // Trạng thái đồng bộ trực tiếp vào thư mục src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts)
@@ -116,23 +151,45 @@ export default function App() {
 
   // Xử lý đăng nhập Giáo viên (Tự động đồng bộ dữ liệu ngay khi đăng nhập với vai trò Giáo viên)
   const handleLoginTeacher = () => {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(ACTIVE_STUDENT_STORAGE_KEY);
+      window.sessionStorage.removeItem(ACTIVE_STUDENT_EXAM_ID_KEY);
+    }
     setCurrentRole('giaovien');
     setAuthenticatedStudent(null);
+    setStudentChosenExamId(null);
     setActiveTab('tongquan');
     setIsAuthenticated(true);
     void syncTeacherDataToRepo();
   };
 
-  // Xử lý đăng nhập Học sinh
-  const handleLoginStudent = (student: Student) => {
+  // Xử lý đăng nhập Học sinh (kèm kỳ thi mà học sinh chọn tham dự)
+  const handleLoginStudent = (student: Student, chosenExamId?: string) => {
+    if (typeof window !== 'undefined') {
+      try {
+        window.sessionStorage.setItem(ACTIVE_STUDENT_STORAGE_KEY, JSON.stringify(student));
+        if (chosenExamId) {
+          window.sessionStorage.setItem(ACTIVE_STUDENT_EXAM_ID_KEY, chosenExamId);
+        }
+      } catch (_e) {
+        // ignore
+      }
+    }
     setCurrentRole('hocsinh');
     setAuthenticatedStudent(student);
+    if (chosenExamId) {
+      setStudentChosenExamId(chosenExamId);
+    }
     setIsAuthenticated(true);
   };
 
   // Đăng xuất về cửa sổ đăng nhập ban đầu:
   // Nếu đang ở vai trò Giáo viên, bắt buộc thực hiện lưu & cập nhật toàn bộ Data vào src/data/ TRƯỚC KHI thoát tài khoản
   const handleLogout = async () => {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(ACTIVE_STUDENT_STORAGE_KEY);
+      window.sessionStorage.removeItem(ACTIVE_STUDENT_EXAM_ID_KEY);
+    }
     if (currentRole === 'giaovien') {
       setIsLoggingOut(true);
       try {
@@ -143,6 +200,7 @@ export default function App() {
     }
     setIsAuthenticated(false);
     setAuthenticatedStudent(null);
+    setStudentChosenExamId(null);
   };
 
   // Xử lý cập nhật ngân hàng câu hỏi (đồng bộ cả đề thi, phiếu bài làm và tự động lưu vào src/data/)
@@ -249,19 +307,23 @@ export default function App() {
     }
   };
 
-  // Cập nhật các session (từ giám sát hoặc mô phỏng)
+  // Cập nhật các session (từ giám sát hoặc mô phỏng) và đồng bộ điểm học sinh vào danh sách lớp
   const handleUpdateSessions = (newSessions: Record<string, StudentExamSession>) => {
     appStorage.saveSessions(newSessions);
     setSessions(newSessions);
+    setStudents(appStorage.getStudents());
   };
 
-  // Cập nhật 1 session (từ học sinh làm bài)
+  // Cập nhật 1 session (từ học sinh làm bài) và đồng bộ điểm vào danh sách lớp khi nộp bài
   const handleUpdateSingleSession = (session: StudentExamSession) => {
     appStorage.saveSession(session);
     setSessions((prev) => ({
       ...prev,
       [`${session.studentId}_${session.examId}`]: session,
     }));
+    if (session.status === 'da_nop_bai' && session.score !== undefined) {
+      setStudents(appStorage.getStudents());
+    }
   };
 
   // Cập nhật cấu hình hệ thống
@@ -306,13 +368,14 @@ export default function App() {
     }
   };
 
-  // Kỳ thi đang thực sự diễn ra (status === 'dang_dien_ra') cho học sinh và mục Tổng quan
-  const openStudentExam = getActiveRunningExam(exams, config.activeExamId);
+  // Danh sách tất cả các kỳ thi đang thực sự diễn ra (status === 'dang_dien_ra')
+  const openStudentExams = getActiveRunningExams(exams, studentChosenExamId || config.activeExamId);
+  const openStudentExam = getActiveRunningExam(exams, studentChosenExamId || config.activeExamId);
 
   // Đề thi đang chọn trong màn hình Giám sát / Bảng điểm của Giáo viên
   const activeExam =
-    openStudentExam ||
     exams.find((e) => e.id === selectedExamId) ||
+    openStudentExam ||
     exams[0] ||
     null;
 
@@ -329,7 +392,6 @@ export default function App() {
           serverPort={config.serverPort}
           schoolName={config.schoolName}
           loggedInStudent={authenticatedStudent}
-          onOpenNetSupportGuide={() => setIsNetSupportOpen(true)}
           onOpenHelpModal={() => setIsHelpModalOpen(true)}
           onLogout={handleLogout}
           onSyncData={() => {
@@ -346,6 +408,7 @@ export default function App() {
         <LoginView
           students={students}
           activeExam={openStudentExam}
+          activeExams={openStudentExams}
           schoolName={config.schoolName}
           onLoginTeacher={handleLoginTeacher}
           onLoginStudent={handleLoginStudent}
@@ -360,7 +423,7 @@ export default function App() {
               exams={exams}
               papers={papers}
               sessions={sessions}
-              activeExamId={openStudentExam?.id || null}
+              activeExamId={studentChosenExamId || openStudentExam?.id || null}
               serverIp={config.serverIp}
               initialStudent={authenticatedStudent}
               onUpdateSession={handleUpdateSingleSession}
@@ -375,13 +438,13 @@ export default function App() {
                   questions={questions}
                   exams={exams}
                   activeExam={openStudentExam}
+                  activeExams={openStudentExams}
                   serverIp={config.serverIp}
                   serverPort={config.serverPort}
                   onNavigate={(tab) => {
                     setActiveTab(tab);
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
-                  onOpenNetSupportGuide={() => setIsNetSupportOpen(true)}
                 />
               )}
 
@@ -396,6 +459,8 @@ export default function App() {
                 <StudentManagementView
                   students={students}
                   classes={classes}
+                  exams={exams}
+                  sessions={sessions}
                   schoolName={config.schoolName}
                   onSaveStudents={handleSaveStudents}
                   onCreateClass={handleCreateClass}
@@ -484,18 +549,10 @@ export default function App() {
             SMART TEST 7 – Hệ thống thi trắc nghiệm trực tuyến môn Tin học 7 (Bộ sách Kết nối tri thức với cuộc sống)
           </span>
           <span className="font-semibold text-blue-800">
-            Thiết kế bởi thầy giáo: Ngô Văn Chinh. Trường TH &amp; THCS Thụy Lâm - Thư Lâm
+            Thiết kế bởi thầy giáo: Ngô Văn Chinh. Trường TH &amp; THCS Thụy Lâm - Xã Thư Lâm - TP Hà Nội
           </span>
         </div>
       </footer>
-
-      {/* Modal Hướng dẫn NetSupport School */}
-      <NetSupportGuideModal
-        isOpen={isNetSupportOpen}
-        onClose={() => setIsNetSupportOpen(false)}
-        serverIp={config.serverIp}
-        serverPort={config.serverPort}
-      />
 
       {/* Modal Trợ giúp & Thông tin tác giả (khi mở từ màn hình đăng nhập hoặc chế độ Học sinh) */}
       {isHelpModalOpen && (

@@ -9,6 +9,9 @@ import {
   Send,
   LogOut,
   GraduationCap,
+  WifiOff,
+  RotateCcw,
+  Users,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Exam, Student, StudentAnswer, StudentExamPaper, StudentExamSession } from '../types';
@@ -24,7 +27,8 @@ import {
   preventOrphanWords,
 } from '../utils/examPaperFormatter';
 import {
-  getActiveRunningExam,
+  authenticateStudent,
+  getActiveRunningExams,
   getQuickSelectStudentsForExam,
 } from '../utils/auth';
 
@@ -34,7 +38,7 @@ interface StudentExamViewProps {
   papers: Record<string, StudentExamPaper>;
   sessions: Record<string, StudentExamSession>;
   activeExamId: string | null;
-  serverIp: string;
+  serverIp?: string;
   initialStudent?: Student | null;
   onUpdateSession: (session: StudentExamSession) => void;
   onStudentExit: () => void;
@@ -50,8 +54,37 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
   onUpdateSession,
   onStudentExit,
 }) => {
+  // Danh sách tất cả các kỳ thi đang thực sự diễn ra (status === 'dang_dien_ra')
+  const runningExams = useMemo(
+    () => getActiveRunningExams(exams, activeExamId),
+    [exams, activeExamId]
+  );
+
+  const [selectedExamIdState, setSelectedExamIdState] = useState<string>(
+    activeExamId || runningExams[0]?.id || ''
+  );
+
+  useEffect(() => {
+    if (activeExamId && runningExams.some((e) => e.id === activeExamId)) {
+      setSelectedExamIdState(activeExamId);
+    } else if (
+      runningExams.length > 0 &&
+      (!selectedExamIdState || !runningExams.some((e) => e.id === selectedExamIdState))
+    ) {
+      setSelectedExamIdState(runningExams[0].id);
+    }
+  }, [activeExamId, runningExams, selectedExamIdState]);
+
+  const activeExam = useMemo(
+    () => runningExams.find((e) => e.id === selectedExamIdState) || runningExams[0] || null,
+    [runningExams, selectedExamIdState]
+  );
+
   // Trạng thái đăng nhập học sinh
   const [loggedInStudent, setLoggedInStudent] = useState<Student | null>(initialStudent);
+  const [selectedClassInput, setSelectedClassInput] = useState<string>(
+    initialStudent?.className || activeExam?.classes?.[0] || ''
+  );
   const [loginCodeInput, setLoginCodeInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('123456');
   const [loginError, setLoginError] = useState('');
@@ -65,16 +98,24 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
 
-  // Tìm kỳ thi đang thực sự diễn ra (status === 'dang_dien_ra')
-  const activeExam = useMemo(
-    () => getActiveRunningExam(exams, activeExamId),
-    [exams, activeExamId]
+  // Trạng thái kết nối mạng và thông báo khôi phục trạng thái lúc thoát ra / mất mạng
+  const [isOffline, setIsOffline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? !navigator.onLine : false
   );
+  const [restoredBannerMessage, setRestoredBannerMessage] = useState<string | null>(null);
 
-  // Danh sách 4 học sinh đầu tiên của đúng lớp tham gia kỳ thi đang mở
+  useEffect(() => {
+    if (activeExam?.classes && activeExam.classes.length > 0) {
+      if (!selectedClassInput || !activeExam.classes.includes(selectedClassInput)) {
+        setSelectedClassInput(activeExam.classes[0]);
+      }
+    }
+  }, [activeExam, selectedClassInput]);
+
+  // Danh sách 4 học sinh đầu tiên của đúng lớp đang chọn trong kỳ thi đang mở
   const quickSelectStudents = useMemo(
-    () => getQuickSelectStudentsForExam(students, activeExam, 4),
-    [students, activeExam]
+    () => getQuickSelectStudentsForExam(students, activeExam, 4, selectedClassInput),
+    [students, activeExam, selectedClassInput]
   );
 
   // Tìm phiên thi và mã đề của học sinh
@@ -93,87 +134,315 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     currentSession?.timeRemainingSeconds ?? (activeExam?.durationMinutes || 15) * 60
   );
 
+  // Refs luôn giữ trạng thái mới nhất để ghi lại tức thì khi mất mạng, đóng tab, hoặc bấm thoát
+  const currentSessionRef = useRef<StudentExamSession | null>(currentSession);
+  const currentQuestionIndexRef = useRef<number>(currentQuestionIndex);
+  const secondsLeftRef = useRef<number>(secondsLeft);
+  const isTakingExamRef = useRef<boolean>(isTakingExam);
+  const isSubmittedRef = useRef<boolean>(isSubmitted);
+  const onUpdateSessionRef = useRef(onUpdateSession);
+
+  useEffect(() => {
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
+
+  useEffect(() => {
+    currentQuestionIndexRef.current = currentQuestionIndex;
+  }, [currentQuestionIndex]);
+
+  useEffect(() => {
+    secondsLeftRef.current = secondsLeft;
+  }, [secondsLeft]);
+
+  useEffect(() => {
+    isTakingExamRef.current = isTakingExam;
+  }, [isTakingExam]);
+
+  useEffect(() => {
+    isSubmittedRef.current = isSubmitted;
+  }, [isSubmitted]);
+
+  useEffect(() => {
+    onUpdateSessionRef.current = onUpdateSession;
+  }, [onUpdateSession]);
+
+  // Format thời gian MM:SS
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  // Hàm ghi lại trạng thái làm bài tại thời điểm hiện tại (khi chuyển câu, mất mạng, hoặc thoát ra)
+  const recordExamSnapshot = (
+    options?: {
+      status?: StudentExamSession['status'];
+      disconnectReason?: 'mat_mang' | 'thoat_ra';
+      questionIndex?: number;
+      remainingSeconds?: number;
+      nextAnswers?: Record<string, StudentAnswer>;
+    }
+  ) => {
+    const sess = currentSessionRef.current;
+    if (!sess || isSubmittedRef.current) return;
+
+    const nowIso = new Date().toISOString();
+    const targetStatus = options?.status || (isOffline ? 'mat_ket_noi' : 'dang_lam_bai');
+    const qIdx =
+      options?.questionIndex !== undefined
+        ? options.questionIndex
+        : currentQuestionIndexRef.current;
+    const remSecs =
+      options?.remainingSeconds !== undefined
+        ? options.remainingSeconds
+        : secondsLeftRef.current;
+    const ans =
+      options?.nextAnswers !== undefined ? options.nextAnswers : answersRef.current;
+
+    const updatedSession: StudentExamSession = {
+      ...sess,
+      status: targetStatus,
+      startedAt: sess.startedAt || nowIso,
+      currentQuestionIndex: qIdx,
+      timeRemainingSeconds: remSecs,
+      answers: ans,
+      lastHeartbeat: nowIso,
+      ...(options?.disconnectReason
+        ? {
+            lastDisconnectedAt: nowIso,
+            disconnectReason: options.disconnectReason,
+          }
+        : {}),
+    };
+
+    currentSessionRef.current = updatedSession;
+    onUpdateSessionRef.current(updatedSession);
+  };
+
+  // Hàm chuyển câu hỏi kèm lưu ngay vị trí câu đang làm
+  const handleSelectQuestionIndex = (nextIdx: number) => {
+    const total = displayQuestions.length;
+    const clampedIdx = total > 0 ? Math.max(0, Math.min(nextIdx, total - 1)) : 0;
+    currentQuestionIndexRef.current = clampedIdx;
+    setCurrentQuestionIndex(clampedIdx);
+    const timeStr = new Date().toLocaleTimeString('vi-VN');
+    setLastAutoSaveTime(timeStr);
+
+    if (isTakingExamRef.current && !isSubmittedRef.current) {
+      recordExamSnapshot({
+        questionIndex: clampedIdx,
+      });
+    }
+  };
+
+  // Hàm khôi phục phiên thi của học sinh khi đăng nhập vào (hoặc vào lại sau khi mất mạng / out ra)
+  const syncStudentSessionOnEnter = (student: Student, exam: Exam | null) => {
+    if (!exam) return;
+    const sKey = `${student.id}_${exam.id}`;
+    const sess = sessions[sKey];
+
+    if (sess && sess.status === 'da_nop_bai') {
+      setIsSubmitted(true);
+      isSubmittedRef.current = true;
+      setIsTakingExam(false);
+      isTakingExamRef.current = false;
+      answersRef.current = sess.answers || {};
+      setAnswers(sess.answers || {});
+      setRestoredBannerMessage(null);
+      return;
+    }
+
+    const hasPreviousProgress =
+      sess &&
+      (sess.status === 'dang_lam_bai' ||
+        sess.status === 'mat_ket_noi' ||
+        Boolean(sess.startedAt) ||
+        Object.keys(sess.answers || {}).length > 0 ||
+        (typeof sess.currentQuestionIndex === 'number' && sess.currentQuestionIndex > 0));
+
+    if (sess && hasPreviousProgress && sess.timeRemainingSeconds > 0) {
+      const restoredIdx =
+        typeof sess.currentQuestionIndex === 'number' ? sess.currentQuestionIndex : 0;
+      const restoredSeconds = sess.timeRemainingSeconds;
+      const restoredAnswers = sess.answers || {};
+
+      setIsSubmitted(false);
+      isSubmittedRef.current = false;
+      setIsTakingExam(true);
+      isTakingExamRef.current = true;
+      setCurrentQuestionIndex(restoredIdx);
+      currentQuestionIndexRef.current = restoredIdx;
+      setSecondsLeft(restoredSeconds);
+      secondsLeftRef.current = restoredSeconds;
+      answersRef.current = restoredAnswers;
+      setAnswers(restoredAnswers);
+
+      const reasonLabel =
+        sess.disconnectReason === 'mat_mang'
+          ? 'mất kết nối mạng'
+          : 'tạm thoát khỏi phòng thi';
+
+      setRestoredBannerMessage(
+        `Đã khôi phục trạng thái bài làm lúc ${reasonLabel}: Tiếp tục tại Câu ${
+          restoredIdx + 1
+        }, thời gian còn lại ${formatTime(restoredSeconds)}.`
+      );
+
+      // Cập nhật lại trạng thái đang làm bài trực tuyến
+      const resumedSession: StudentExamSession = {
+        ...sess,
+        status: 'dang_lam_bai',
+        currentQuestionIndex: restoredIdx,
+        timeRemainingSeconds: restoredSeconds,
+        answers: restoredAnswers,
+        lastHeartbeat: new Date().toISOString(),
+      };
+      currentSessionRef.current = resumedSession;
+      onUpdateSession(resumedSession);
+    } else {
+      setIsSubmitted(false);
+      isSubmittedRef.current = false;
+      setIsTakingExam(false);
+      isTakingExamRef.current = false;
+      setCurrentQuestionIndex(0);
+      currentQuestionIndexRef.current = 0;
+      const defaultSecs = sess?.timeRemainingSeconds ?? exam.durationMinutes * 60;
+      setSecondsLeft(defaultSecs);
+      secondsLeftRef.current = defaultSecs;
+      answersRef.current = {};
+      setAnswers({});
+      setRestoredBannerMessage(null);
+    }
+  };
+
   // Đồng bộ trạng thái khi học sinh đăng nhập từ cửa sổ đăng nhập chính (initialStudent)
   useEffect(() => {
     if (initialStudent) {
       setLoggedInStudent(initialStudent);
-      setCurrentQuestionIndex(0);
-      if (activeExam) {
-        const sKey = `${initialStudent.id}_${activeExam.id}`;
-        const sess = sessions[sKey];
-        if (sess && sess.status === 'da_nop_bai') {
-          setIsSubmitted(true);
-          setIsTakingExam(false);
-          answersRef.current = sess.answers || {};
-          setAnswers(sess.answers || {});
-        } else if (sess && sess.status === 'dang_lam_bai') {
-          setIsSubmitted(false);
-          setIsTakingExam(true);
-          answersRef.current = sess.answers || {};
-          setAnswers(sess.answers || {});
-          setSecondsLeft(sess.timeRemainingSeconds);
-        } else {
-          setIsSubmitted(false);
-          setIsTakingExam(false);
-          answersRef.current = {};
-          setAnswers({});
+      setSelectedClassInput(initialStudent.className);
+      syncStudentSessionOnEnter(initialStudent, activeExam);
+    }
+  }, [initialStudent?.id, activeExam?.id]);
+
+  // Lắng nghe sự kiện mất mạng (offline), có mạng lại (online), đóng tab (beforeunload) hoặc thoát khỏi màn hình thi
+  useEffect(() => {
+    const handleOffline = () => {
+      setIsOffline(true);
+      if (isTakingExamRef.current && !isSubmittedRef.current) {
+        const timeStr = new Date().toLocaleTimeString('vi-VN');
+        setLastAutoSaveTime(timeStr);
+        recordExamSnapshot({
+          status: 'mat_ket_noi',
+          disconnectReason: 'mat_mang',
+        });
+      }
+    };
+
+    const handleOnline = () => {
+      setIsOffline(false);
+      if (isTakingExamRef.current && !isSubmittedRef.current) {
+        const timeStr = new Date().toLocaleTimeString('vi-VN');
+        setLastAutoSaveTime(timeStr);
+        recordExamSnapshot({
+          status: 'dang_lam_bai',
+        });
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      if (isTakingExamRef.current && !isSubmittedRef.current) {
+        recordExamSnapshot({
+          status: 'mat_ket_noi',
+          disconnectReason: 'thoat_ra',
+        });
+      }
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Khi component unmount lúc học sinh bấm Đăng xuất ở thanh trên cùng khi đang làm bài
+      if (isTakingExamRef.current && !isSubmittedRef.current) {
+        const sess = currentSessionRef.current;
+        if (sess) {
+          const nowIso = new Date().toISOString();
+          const finalSnapshot: StudentExamSession = {
+            ...sess,
+            status: 'mat_ket_noi',
+            startedAt: sess.startedAt || nowIso,
+            currentQuestionIndex: currentQuestionIndexRef.current,
+            timeRemainingSeconds: secondsLeftRef.current,
+            answers: answersRef.current,
+            lastHeartbeat: nowIso,
+            lastDisconnectedAt: nowIso,
+            disconnectReason: 'thoat_ra',
+          };
+          queueMicrotask(() => {
+            onUpdateSessionRef.current(finalSnapshot);
+          });
         }
       }
-    }
-  }, [initialStudent, activeExam?.id]);
+    };
+  }, []);
 
-  // Xử lý đăng nhập học sinh
-  const handleLogin = (codeToUse?: string) => {
-    const code = (codeToUse || loginCodeInput).trim().toLowerCase();
-    const student = students.find((s) => s.loginCode.toLowerCase() === code);
+  // Xử lý đăng nhập học sinh (trong màn hình dự phòng của StudentExamView)
+  const handleLogin = (codeToUse?: string, classToUse?: string) => {
+    const code = codeToUse !== undefined ? codeToUse : loginCodeInput;
+    const cls = classToUse !== undefined ? classToUse : selectedClassInput;
 
-    if (!student) {
-      setLoginError('Mã đăng nhập không tồn tại trong danh sách lớp.');
+    const res = authenticateStudent(code, passwordInput, students, activeExam, cls);
+    if (!res.ok || !res.student) {
+      setLoginError(res.error || 'Đăng nhập không thành công.');
       return;
     }
 
-    if (passwordInput !== '123456') {
-      setLoginError('Mật khẩu không chính xác. Mật khẩu ban đầu là: 123456');
-      return;
-    }
-
-    setLoggedInStudent(student);
+    setLoggedInStudent(res.student);
     setLoginError('');
-    setCurrentQuestionIndex(0);
-
-    // Kiểm tra xem đã nộp bài trước đó chưa
-    if (activeExam) {
-      const sKey = `${student.id}_${activeExam.id}`;
-      const sess = sessions[sKey];
-      if (sess && sess.status === 'da_nop_bai') {
-        setIsSubmitted(true);
-        answersRef.current = sess.answers || {};
-        setAnswers(sess.answers || {});
-      } else if (sess && sess.status === 'dang_lam_bai') {
-        setIsTakingExam(true);
-        answersRef.current = sess.answers || {};
-        setAnswers(sess.answers || {});
-        setSecondsLeft(sess.timeRemainingSeconds);
-      } else {
-        answersRef.current = {};
-        setAnswers({});
-      }
-    }
+    syncStudentSessionOnEnter(res.student, activeExam);
   };
 
   // Bắt đầu làm bài
   const handleStartExam = () => {
     if (!loggedInStudent || !activeExam || !currentSession) return;
 
+    const restoredIdx =
+      typeof currentSession.currentQuestionIndex === 'number'
+        ? currentSession.currentQuestionIndex
+        : 0;
+    const nowIso = new Date().toISOString();
     const updatedSession: StudentExamSession = {
       ...currentSession,
       status: 'dang_lam_bai',
-      startedAt: currentSession.startedAt || new Date().toISOString(),
-      lastHeartbeat: new Date().toISOString(),
+      startedAt: currentSession.startedAt || nowIso,
+      currentQuestionIndex: restoredIdx,
+      timeRemainingSeconds: secondsLeftRef.current,
+      lastHeartbeat: nowIso,
     };
+    currentSessionRef.current = updatedSession;
     onUpdateSession(updatedSession);
     setIsTakingExam(true);
-    setCurrentQuestionIndex(0);
+    isTakingExamRef.current = true;
+    setCurrentQuestionIndex(restoredIdx);
+    currentQuestionIndexRef.current = restoredIdx;
+  };
+
+  // Tạm thoát / Out ra trong lúc đang làm bài: Ghi lại chính xác trạng thái câu đang làm, thời gian còn lại và đáp án
+  const handlePauseAndExitExam = () => {
+    if (isTakingExamRef.current && !isSubmittedRef.current) {
+      recordExamSnapshot({
+        status: 'mat_ket_noi',
+        disconnectReason: 'thoat_ra',
+      });
+    }
+    setLoggedInStudent(null);
+    setIsTakingExam(false);
+    isTakingExamRef.current = false;
+    onStudentExit();
   };
 
   // Lưu và đồng bộ câu trả lời nguyên tử (không mất dữ liệu khi chọn nhanh)
@@ -187,14 +456,10 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     answersRef.current = next;
     setAnswers(next);
 
-    if (currentSession) {
-      onUpdateSession({
-        ...currentSession,
-        status: 'dang_lam_bai',
-        answers: next,
-        lastHeartbeat: new Date().toISOString(),
-      });
-    }
+    recordExamSnapshot({
+      status: isOffline ? 'mat_ket_noi' : 'dang_lam_bai',
+      nextAnswers: next,
+    });
   };
 
   // 1. Chọn phương án trả lời dạng Nhiều lựa chọn (A, B, C, D)
@@ -290,19 +555,33 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     });
   };
 
-  // Đếm ngược đồng hồ
+  // Đếm ngược đồng hồ và lưu liên tục thời gian còn lại để khi mất mạng/thoát ra luôn chính xác
   useEffect(() => {
     if (!isTakingExam || isSubmitted) return;
 
     const timer = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          handleSubmitExam(true); // Hết giờ tự động nộp
-          return 0;
-        }
-        return prev - 1;
-      });
+      const prev = secondsLeftRef.current;
+      if (prev <= 1) {
+        clearInterval(timer);
+        secondsLeftRef.current = 0;
+        setSecondsLeft(0);
+        handleSubmitExam(true); // Hết giờ tự động nộp
+        return;
+      }
+      const nextSecs = prev - 1;
+      secondsLeftRef.current = nextSecs;
+      setSecondsLeft(nextSecs);
+      if (currentSessionRef.current) {
+        const updated: StudentExamSession = {
+          ...currentSessionRef.current,
+          timeRemainingSeconds: nextSecs,
+          currentQuestionIndex: currentQuestionIndexRef.current,
+          answers: answersRef.current,
+          lastHeartbeat: new Date().toISOString(),
+        };
+        currentSessionRef.current = updated;
+        onUpdateSessionRef.current(updated);
+      }
     }, 1000);
 
     return () => clearInterval(timer);
@@ -323,6 +602,7 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
       status: 'da_nop_bai',
       submittedAt: new Date().toISOString(),
       timeRemainingSeconds: 0,
+      currentQuestionIndex: currentQuestionIndexRef.current,
       answers: answersRef.current,
       score: graded.score,
       correctCount: graded.correctCount,
@@ -331,6 +611,9 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
       lastHeartbeat: new Date().toISOString(),
     };
 
+    isSubmittedRef.current = true;
+    isTakingExamRef.current = false;
+    currentSessionRef.current = submittedSession;
     onUpdateSession(submittedSession);
     setIsTakingExam(false);
     setIsSubmitted(true);
@@ -345,13 +628,6 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     } catch (_e) {
       // ignore
     }
-  };
-
-  // Format thời gian MM:SS
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
   // 1. MÀN HÌNH ĐĂNG NHẬP
@@ -392,18 +668,66 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
               <div className="space-y-4 text-xs">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1.5">
-                    Mã đăng nhập của học sinh:
+                    Chọn kỳ thi tham dự ({runningExams.length} kỳ thi đang mở):
                   </label>
-                  <input
-                    type="text"
-                    value={loginCodeInput}
-                    onChange={(e) => setLoginCodeInput(e.target.value)}
-                    placeholder="Ví dụ: nvan, ttmanh, lhphuc..."
-                    className="w-full p-3 border border-slate-300 rounded-xl font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    (Chữ cái đầu họ tên viết liền, không dấu do giáo viên cấp)
-                  </p>
+                  <select
+                    data-testid="select-student-exam"
+                    value={activeExam.id}
+                    onChange={(e) => {
+                      const nextEx = runningExams.find((ex) => ex.id === e.target.value);
+                      setSelectedExamIdState(e.target.value);
+                      if (nextEx?.classes?.[0]) {
+                        setSelectedClassInput(nextEx.classes[0]);
+                      }
+                      setLoginError('');
+                    }}
+                    className="w-full p-3 border border-emerald-300 rounded-xl font-bold text-sm bg-emerald-50/40 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+                  >
+                    {runningExams.map((ex) => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.title} (Lớp: {ex.classes.join(', ')} • {ex.durationMinutes} phút)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                  <div className="sm:col-span-5">
+                    <label className="block font-bold text-slate-700 mb-1.5">
+                      Chọn lớp học:
+                    </label>
+                    <div className="relative">
+                      <Users className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <select
+                        data-testid="select-student-class"
+                        value={selectedClassInput}
+                        onChange={(e) => {
+                          setSelectedClassInput(e.target.value);
+                          setLoginError('');
+                        }}
+                        className="w-full pl-9 pr-3 py-3 border border-slate-300 rounded-xl font-bold text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+                      >
+                        {activeExam.classes.map((cls) => (
+                          <option key={cls} value={cls}>
+                            Lớp {cls}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-7">
+                    <label className="block font-bold text-slate-700 mb-1.5">
+                      Mã đăng nhập của học sinh:
+                    </label>
+                    <input
+                      type="text"
+                      value={loginCodeInput}
+                      onChange={(e) => setLoginCodeInput(e.target.value)}
+                      placeholder="Ví dụ: nvan, ttmanh, lhphuc..."
+                      className="w-full p-3 border border-slate-300 rounded-xl font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -426,11 +750,11 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
                 </button>
               </div>
 
-              {/* Gợi ý 4 học sinh đầu tiên của đúng lớp được mở thi */}
+              {/* Gợi ý 4 học sinh đầu tiên của đúng lớp đang chọn */}
               {quickSelectStudents.length > 0 && (
                 <div className="pt-4 border-t border-slate-100 space-y-2">
                   <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block text-center">
-                    Gợi ý chọn nhanh 4 học sinh Lớp {activeExam.classes.join(', ')}:
+                    Gợi ý chọn nhanh 4 học sinh Lớp {selectedClassInput || activeExam.classes[0]}:
                   </span>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {quickSelectStudents.map((s) => (
@@ -438,9 +762,10 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
                         key={s.id}
                         data-testid={`demo-student-${s.loginCode}`}
                         onClick={() => {
+                          setSelectedClassInput(s.className);
                           setLoginCodeInput(s.loginCode);
                           setPasswordInput('123456');
-                          handleLogin(s.loginCode);
+                          handleLogin(s.loginCode, s.className);
                         }}
                         className="p-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-lg text-left transition-colors cursor-pointer"
                       >
@@ -642,7 +967,47 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
 
   return (
     <div className="max-w-5xl mx-auto my-4 space-y-4">
-      {/* THANH ĐIỀU HƯỚNG TRÊN: THÔNG TIN HỌC SINH + ĐỒNG HỒ ĐẾM NGƯỢC + NỘP BÀI */}
+      {/* BANNER CẢNH BÁO MẤT KẾT NỐI MẠNG (NẾU BỊ OFFLINE TRONG LÚC THI) */}
+      {isOffline && (
+        <div
+          data-testid="student-offline-banner"
+          className="bg-amber-50 border border-amber-300 text-amber-900 p-3.5 rounded-xl text-xs flex items-center justify-between gap-3 shadow-xs"
+        >
+          <div className="flex items-center space-x-2.5">
+            <WifiOff className="w-5 h-5 text-amber-600 shrink-0 animate-pulse" />
+            <div>
+              <p className="font-extrabold">
+                Mất kết nối mạng! Đã ghi lại trạng thái lúc mất mạng (Câu {currentQuestionIndex + 1}, còn {formatTime(secondsLeft)})
+              </p>
+              <p className="text-[11px] text-amber-800">
+                Toàn bộ đáp án, câu hỏi đang làm và thời gian còn lại được lưu an toàn. Khi có mạng hoặc đăng nhập lại sẽ tiếp tục tại đúng vị trí này.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BANNER THÔNG BÁO ĐÃ KHÔI PHỤC TRẠNG THÁI LÚC OUT RA / MẤT MẠNG */}
+      {restoredBannerMessage && (
+        <div
+          data-testid="student-restored-state-banner"
+          className="bg-emerald-50 border border-emerald-300 text-emerald-900 p-3.5 rounded-xl text-xs flex items-center justify-between gap-3 shadow-xs"
+        >
+          <div className="flex items-center space-x-2.5">
+            <RotateCcw className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span className="font-bold">{restoredBannerMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRestoredBannerMessage(null)}
+            className="text-[11px] font-bold text-emerald-700 hover:text-emerald-950 underline shrink-0 cursor-pointer"
+          >
+            Đã hiểu
+          </button>
+        </div>
+      )}
+
+      {/* THANH ĐIỀU HƯỚNG TRÊN: THÔNG TIN HỌC SINH + ĐỒNG HỒ ĐẾM NGƯỢC + TẠM THOÁT / NỘP BÀI */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-16 z-30">
         <div className="flex items-center space-x-3">
           <div className="bg-blue-100 text-blue-800 font-black px-2.5 py-1.5 rounded-lg text-xs font-mono">
@@ -651,14 +1016,15 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
           <div>
             <h3 className="font-bold text-slate-800 text-sm">{loggedInStudent.fullName}</h3>
             <p className="text-[11px] text-slate-500">
-              Lớp {loggedInStudent.className} • Tiến độ: {answeredCount}/{displayQuestions.length} câu
+              Lớp {loggedInStudent.className} • Câu đang làm: {currentQuestionIndex + 1}/{displayQuestions.length} • Đã trả lời: {answeredCount}/{displayQuestions.length} câu
             </p>
           </div>
         </div>
 
-        {/* Đồng hồ đếm ngược & Nút nộp bài */}
-        <div className="flex items-center space-x-4 self-center sm:self-auto">
+        {/* Đồng hồ đếm ngược, Nút Tạm thoát (lưu trạng thái) & Nút nộp bài */}
+        <div className="flex flex-wrap items-center gap-2.5 self-center sm:self-auto">
           <div
+            data-testid="student-exam-timer"
             className={`px-4 py-2 rounded-xl flex items-center space-x-2 font-mono font-black text-base shadow-xs ${
               secondsLeft <= 120
                 ? 'bg-red-50 text-red-600 border border-red-300 animate-pulse'
@@ -670,6 +1036,18 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
           </div>
 
           <button
+            type="button"
+            onClick={handlePauseAndExitExam}
+            data-testid="student-btn-pause-exit"
+            title="Tạm thoát khỏi phòng thi và ghi lại trạng thái câu đang làm, thời gian còn lại để khi vào lại tiếp tục ngay"
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold text-xs px-3 py-2.5 rounded-xl flex items-center space-x-1.5 transition-all cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Tạm thoát</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowConfirmSubmit(true)}
             data-testid="student-btn-submit-exam"
             className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer"
@@ -722,7 +1100,7 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
                   key={q.id}
                   type="button"
                   data-testid={`nav-question-${idx + 1}`}
-                  onClick={() => setCurrentQuestionIndex(idx)}
+                  onClick={() => handleSelectQuestionIndex(idx)}
                   className={`h-9 rounded-lg border text-xs flex items-center justify-center font-bold transition-all relative cursor-pointer ${btnStyle}`}
                 >
                   {idx + 1}
@@ -1062,7 +1440,7 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
               <button
                 type="button"
                 disabled={currentQuestionIndex === 0}
-                onClick={() => setCurrentQuestionIndex((prev) => prev - 1)}
+                onClick={() => handleSelectQuestionIndex(currentQuestionIndex - 1)}
                 className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 border ${
                   currentQuestionIndex === 0
                     ? 'text-slate-300 border-slate-200 cursor-not-allowed'
@@ -1076,7 +1454,7 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
               <button
                 type="button"
                 disabled={currentQuestionIndex === displayQuestions.length - 1}
-                onClick={() => setCurrentQuestionIndex((prev) => prev + 1)}
+                onClick={() => handleSelectQuestionIndex(currentQuestionIndex + 1)}
                 className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 ${
                   currentQuestionIndex === displayQuestions.length - 1
                     ? 'text-slate-300 border border-slate-200 cursor-not-allowed'

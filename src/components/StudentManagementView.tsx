@@ -25,7 +25,7 @@ import {
   Check,
   FileText,
 } from 'lucide-react';
-import { Student } from '../types';
+import { Exam, Student, StudentExamSession } from '../types';
 import {
   downloadSampleStudentExcel,
   downloadSampleClassListExcel,
@@ -43,6 +43,8 @@ import {
 interface StudentManagementViewProps {
   students: Student[];
   classes: string[];
+  exams?: Exam[];
+  sessions?: Record<string, StudentExamSession>;
   schoolName: string;
   onSaveStudents: (students: Student[]) => void;
   onCreateClass: (className: string) => boolean;
@@ -54,6 +56,8 @@ interface StudentManagementViewProps {
 export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
   students,
   classes,
+  exams = [],
+  sessions = {},
   schoolName,
   onSaveStudents,
   onCreateClass,
@@ -63,6 +67,14 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClass, setSelectedClass] = useState<string>('all');
+  const [statusBanner, setStatusBanner] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  const showBanner = (message: string, type: 'success' | 'error' = 'success') => {
+    setStatusBanner({ type, message });
+  };
 
   // Chọn hàng loạt học sinh
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
@@ -150,50 +162,38 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
     onBatchDeleteStudents(ids);
     setSelectedStudentIds(new Set());
     setIsBatchDeleteModalOpen(false);
+    showBanner(`Đã xóa ${ids.length} học sinh khỏi danh sách.`);
   };
 
   // Đặt lại mật khẩu hàng loạt về 123456
   const handleBatchResetPassword = () => {
     if (selectedStudentIds.size === 0) return;
-    if (
-      window.confirm(
-        `Bạn có chắc chắn muốn đặt lại mật khẩu về "123456" cho ${selectedStudentIds.size} học sinh đã chọn?`
-      )
-    ) {
-      const updated = students.map((s) =>
-        selectedStudentIds.has(s.id)
-          ? { ...s, passwordHash: DEFAULT_STUDENT_PASSWORD_HASH }
-          : s
-      );
-      onSaveStudents(updated);
-      alert(`Đã đặt lại mật khẩu về 123456 cho ${selectedStudentIds.size} học sinh thành công!`);
-    }
+    const updated = students.map((s) =>
+      selectedStudentIds.has(s.id)
+        ? { ...s, passwordHash: DEFAULT_STUDENT_PASSWORD_HASH }
+        : s
+    );
+    onSaveStudents(updated);
+    showBanner(`Đã đặt lại mật khẩu về 123456 cho ${selectedStudentIds.size} học sinh thành công!`);
   };
 
   // Đặt lại mật khẩu 1 học sinh
   const handleResetPassword = (studentId: string, studentName: string) => {
-    if (
-      window.confirm(
-        `Bạn có chắc chắn muốn đặt lại mật khẩu của học sinh "${studentName}" về mặc định "123456"?`
-      )
-    ) {
-      const updated = students.map((s) =>
-        s.id === studentId ? { ...s, passwordHash: DEFAULT_STUDENT_PASSWORD_HASH } : s
-      );
-      onSaveStudents(updated);
-      alert(`Đã đặt lại mật khẩu cho học sinh "${studentName}" thành: 123456`);
-    }
+    const updated = students.map((s) =>
+      s.id === studentId ? { ...s, passwordHash: DEFAULT_STUDENT_PASSWORD_HASH } : s
+    );
+    onSaveStudents(updated);
+    showBanner(`Đã đặt lại mật khẩu cho học sinh "${studentName}" thành: 123456`);
   };
 
   // Xóa 1 học sinh
   const handleDeleteStudent = (studentId: string) => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa học sinh này khỏi danh sách?')) {
-      const updated = students.filter((s) => s.id !== studentId);
-      onSaveStudents(updated);
-      const nextSelected = new Set(selectedStudentIds);
-      nextSelected.delete(studentId);
-      setSelectedStudentIds(nextSelected);
-    }
+    const updated = students.filter((s) => s.id !== studentId);
+    onSaveStudents(updated);
+    const nextSelected = new Set(selectedStudentIds);
+    nextSelected.delete(studentId);
+    setSelectedStudentIds(nextSelected);
+    showBanner('Đã xóa học sinh khỏi danh sách lớp.');
   };
 
   // 1. Xử lý tạo 1 lớp trống thủ công
@@ -214,14 +214,16 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       setNewClassNameInput('');
       setCreateClassError('');
       setSelectedClass(trimmed);
-      alert(`Đã tạo lớp trống "${trimmed}" thành công! Bạn có thể tải lên danh sách học sinh cho lớp này.`);
+      showBanner(
+        `Đã tạo lớp trống "${trimmed}" thành công! Bạn có thể tải lên danh sách học sinh cho lớp này.`
+      );
     }
   };
 
   // 2. Xử lý đọc file Excel danh sách lớp
   const handleProcessClassExcelFile = async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
-      alert('Vui lòng chọn tệp bảng tính Excel (.xlsx hoặc .xls)!');
+      showBanner('Vui lòng chọn tệp bảng tính Excel (.xlsx hoặc .xls)!', 'error');
       return;
     }
 
@@ -234,7 +236,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       const result = await parseClassesFromExcelBuffer(buffer);
 
       if (result.classes.length === 0) {
-        alert('Không tìm thấy tên lớp học hợp lệ trong tệp Excel.');
+        showBanner('Không tìm thấy tên lớp học hợp lệ trong tệp Excel.', 'error');
         setIsParsingClassExcel(false);
         return;
       }
@@ -244,14 +246,17 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
     } catch (err: any) {
       console.error('Lỗi đọc tệp Excel danh sách lớp:', err);
       setIsParsingClassExcel(false);
-      alert(`Lỗi khi đọc file Excel danh sách lớp: ${err.message || 'Không thể đọc tệp'}`);
+      showBanner(
+        `Lỗi khi đọc file Excel danh sách lớp: ${err.message || 'Không thể đọc tệp'}`,
+        'error'
+      );
     }
   };
 
   // Xử lý phân tích văn bản danh sách lớp nhập nhanh
   const handleParseTextClassList = () => {
     if (!rawClassListText.trim()) {
-      alert('Vui lòng nhập hoặc dán danh sách các lớp học!');
+      showBanner('Vui lòng nhập hoặc dán danh sách các lớp học!', 'error');
       return;
     }
     const lines = rawClassListText
@@ -261,7 +266,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
 
     const unique = Array.from(new Set(lines)).sort();
     if (unique.length === 0) {
-      alert('Không tìm thấy tên lớp hợp lệ.');
+      showBanner('Không tìm thấy tên lớp hợp lệ.', 'error');
       return;
     }
     setParsedClassNames(unique);
@@ -276,7 +281,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       setIsBatchClassModalOpen(false);
       const firstNew = res.added[0] || parsedClassNames[0];
       setSelectedClass(firstNew);
-      alert(
+      showBanner(
         `Đã khởi tạo thành công ${res.added.length} lớp trống mới (${res.added.join(', ')}).${
           res.skipped.length > 0 ? ` Đã bỏ qua ${res.skipped.length} lớp đã có sẵn.` : ''
         }`
@@ -291,7 +296,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       });
       setIsBatchClassModalOpen(false);
       setSelectedClass(parsedClassNames[0]);
-      alert(`Đã khởi tạo thành công ${count} lớp trống mới!`);
+      showBanner(`Đã khởi tạo thành công ${count} lớp trống mới!`);
     }
 
     setParsedClassNames([]);
@@ -308,6 +313,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
     if (selectedClass === classToDelete) {
       setSelectedClass('all');
     }
+    showBanner(`Đã xóa lớp ${classToDelete}.`);
   };
 
   // 4. Mở modal tải học sinh cho lớp cụ thể
@@ -324,7 +330,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
   // Xử lý đọc tệp Excel danh sách học sinh
   const handleProcessExcelFile = async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
-      alert('Vui lòng chọn tệp bảng tính Excel (.xlsx hoặc .xls)!');
+      showBanner('Vui lòng chọn tệp bảng tính Excel (.xlsx hoặc .xls)!', 'error');
       return;
     }
 
@@ -341,7 +347,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       setExcelErrors(result.errors);
 
       if (result.students.length === 0) {
-        alert('Không tìm thấy dữ liệu học sinh hợp lệ trong tệp Excel.');
+        showBanner('Không tìm thấy dữ liệu học sinh hợp lệ trong tệp Excel.', 'error');
         setIsParsingExcel(false);
         return;
       }
@@ -367,7 +373,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
     } catch (err: any) {
       console.error('Lỗi đọc tệp Excel học sinh:', err);
       setIsParsingExcel(false);
-      alert(`Lỗi khi đọc file Excel: ${err.message || 'Không thể phân tích dữ liệu'}`);
+      showBanner(`Lỗi khi đọc file Excel: ${err.message || 'Không thể phân tích dữ liệu'}`, 'error');
     }
   };
 
@@ -404,7 +410,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
 
     setExcelPreviewStudents([]);
     setExcelFileName(null);
-    alert(
+    showBanner(
       `Đã nhập thành công ${excelPreviewStudents.length} học sinh vào lớp ${targetClassForExcel}!`
     );
   };
@@ -412,7 +418,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
   // Thêm 1 học sinh thủ công
   const handleAddSingleStudent = () => {
     if (!newFullName.trim()) {
-      alert('Vui lòng nhập họ và tên học sinh');
+      showBanner('Vui lòng nhập họ và tên học sinh', 'error');
       return;
     }
 
@@ -445,6 +451,32 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
     setNewFullName('');
     setNewStudentIdCode('');
     setSelectedClass(cls);
+    showBanner(`Đã thêm học sinh "${newStudent.fullName}" vào lớp ${cls}.`);
+  };
+
+  // Helper lấy điểm thi mới nhất hoặc điểm theo phiên của học sinh
+  const getStudentDisplayScore = (student: Student) => {
+    if (student.latestScore !== undefined) {
+      return {
+        score: student.latestScore,
+        examTitle: student.latestExamTitle || 'Đã nộp bài',
+        recordsCount: Object.keys(student.examScores || {}).length,
+      };
+    }
+    // Kiểm tra trong sessions nếu có phiên đã nộp bài
+    const studentSubmittedSessions = Object.values(sessions).filter(
+      (s) => s && s.studentId === student.id && s.status === 'da_nop_bai' && s.score !== undefined
+    );
+    if (studentSubmittedSessions.length > 0) {
+      const latestSess = studentSubmittedSessions[studentSubmittedSessions.length - 1];
+      const exTitle = exams.find((e) => e.id === latestSess.examId)?.title || 'Đã nộp bài';
+      return {
+        score: latestSess.score!,
+        examTitle: exTitle,
+        recordsCount: studentSubmittedSessions.length,
+      };
+    }
+    return null;
   };
 
   const selectedClassStudentCount =
@@ -454,19 +486,42 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {statusBanner && (
+        <div
+          className={`p-3.5 rounded-xl border text-xs font-bold flex items-center justify-between ${
+            statusBanner.type === 'error'
+              ? 'bg-red-50 border-red-200 text-red-700'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <div className="flex items-center space-x-2">
+            {statusBanner.type === 'error' ? (
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            )}
+            <span>{statusBanner.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStatusBanner(null)}
+            className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* KHỐI TIÊU ĐỀ & CÁC NÚT TÁC VỤ CHÍNH */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-xl font-bold text-slate-800 flex items-center space-x-2">
             <Users className="w-5 h-5 text-blue-600" />
-            <span>Quản lý học sinh, Lớp học & Tài khoản phòng máy LAN</span>
+            <span>Quản lý danh sách lớp, Học sinh &amp; Điểm kiểm tra</span>
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Tổng cộng: <strong>{students.length}</strong> học sinh trong{' '}
-            <strong>{classes.length}</strong> lớp học • Mật khẩu mặc định:{' '}
-            <code className="bg-slate-100 text-slate-800 px-1 py-0.5 rounded font-mono font-bold">
-              123456
-            </code>
+            <strong>{classes.length}</strong> lớp học • Điểm thi sau khi nộp bài được lưu trực tiếp vào danh sách lớp
           </p>
         </div>
 
@@ -474,21 +529,28 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
           {/* Tải tệp mẫu Excel học sinh */}
           <button
             onClick={downloadSampleStudentExcel}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg flex items-center space-x-1.5 transition-colors border border-slate-300"
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg flex items-center space-x-1.5 transition-colors border border-slate-300 cursor-pointer"
             title="Tải tệp mẫu Excel danh sách học sinh"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Tải Excel mẫu</span>
           </button>
 
-          {/* Xuất danh sách tài khoản */}
+          {/* Xuất danh sách lớp kèm điểm ra file Excel */}
           <button
-            onClick={() => exportStudentAccountsExcel(students, schoolName)}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm"
-            title="Xuất file tài khoản phòng máy LAN"
+            data-testid="btn-export-class-scores-excel"
+            onClick={() =>
+              exportStudentAccountsExcel(students, schoolName, exams, sessions, selectedClass)
+            }
+            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
+            title="Xuất danh sách lớp kèm điểm số các kỳ thi ra file Excel (.xlsx)"
           >
             <FileDown className="w-3.5 h-3.5" />
-            <span>Xuất file tài khoản (.xlsx)</span>
+            <span>
+              {selectedClass !== 'all'
+                ? `Xuất DS Lớp ${selectedClass} & Điểm (.xlsx)`
+                : 'Xuất DS Lớp & Điểm (.xlsx)'}
+            </span>
           </button>
 
           {/* Upload file học sinh cho lớp đang chọn */}
@@ -498,7 +560,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                 selectedClass !== 'all' ? selectedClass : classes[0] || '7A'
               )
             }
-            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm"
+            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
           >
             <FileUp className="w-4 h-4" />
             <span>
@@ -514,7 +576,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
               setNewClassName(selectedClass !== 'all' ? selectedClass : '7A');
               setIsAddStudentOpen(true);
             }}
-            className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm"
+            className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Thêm học sinh</span>
@@ -535,7 +597,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
             {/* Nút "Tất cả các lớp" */}
             <button
               onClick={() => setSelectedClass('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 selectedClass === 'all'
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -554,7 +616,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                 <button
                   key={cls}
                   onClick={() => setSelectedClass(cls)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer ${
                     isSelected
                       ? 'bg-blue-600 text-white shadow-xs'
                       : isEmpty
@@ -595,7 +657,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                 setCreateClassError('');
                 setIsCreateClassModalOpen(true);
               }}
-              className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors"
+              className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors cursor-pointer"
               title="Tạo từng lớp trống mới"
             >
               <FolderPlus className="w-3.5 h-3.5 text-blue-600" />
@@ -610,7 +672,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                 setRawClassListText('');
                 setIsBatchClassModalOpen(true);
               }}
-              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors"
+              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors cursor-pointer"
               title="Upload danh sách lớp từ file Excel hoặc nhập nhanh nhiều lớp"
             >
               <FolderUp className="w-3.5 h-3.5 text-indigo-600" />
@@ -625,7 +687,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                   setDeleteStudentsWithClass(true);
                   setIsDeleteClassModalOpen(true);
                 }}
-                className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1 transition-colors"
+                className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1 transition-colors cursor-pointer"
                 title={`Xóa lớp ${selectedClass}`}
               >
                 <FolderMinus className="w-3.5 h-3.5 text-red-600" />
@@ -649,10 +711,19 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() =>
+                  exportStudentAccountsExcel(students, schoolName, exams, sessions, selectedClass)
+                }
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                <span>Xuất file danh sách &amp; điểm lớp {selectedClass} (.xlsx)</span>
+              </button>
               <button
                 onClick={() => handleOpenStudentUploadForClass(selectedClass)}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 shadow-xs transition-colors"
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
                 <span>Upload file danh sách học sinh cho lớp {selectedClass}</span>
@@ -671,7 +742,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
             </span>
             <button
               onClick={() => setSelectedStudentIds(new Set())}
-              className="text-blue-200 hover:text-white underline font-semibold"
+              className="text-blue-200 hover:text-white underline font-semibold cursor-pointer"
             >
               Bỏ chọn tất cả
             </button>
@@ -681,7 +752,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
             {/* Đặt lại mật khẩu hàng loạt */}
             <button
               onClick={handleBatchResetPassword}
-              className="bg-white/10 hover:bg-white/20 text-white border border-white/30 font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors"
+              className="bg-white/10 hover:bg-white/20 text-white border border-white/30 font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors cursor-pointer"
             >
               <KeyRound className="w-3.5 h-3.5 text-amber-300" />
               <span>Đặt lại mật khẩu (123456)</span>
@@ -690,7 +761,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
             {/* Xóa hàng loạt học sinh */}
             <button
               onClick={() => setIsBatchDeleteModalOpen(true)}
-              className="bg-red-500 hover:bg-red-600 text-white font-extrabold px-3.5 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm"
+              className="bg-red-500 hover:bg-red-600 text-white font-extrabold px-3.5 py-1.5 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>Xóa {selectedStudentIds.size} học sinh đã chọn</span>
@@ -718,14 +789,14 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <button
               onClick={() => handleOpenStudentUploadForClass(selectedClass)}
-              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl flex items-center space-x-2 shadow-sm transition-all"
+              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl flex items-center space-x-2 shadow-sm transition-all cursor-pointer"
             >
               <FileSpreadsheet className="w-4 h-4" />
               <span>Upload file danh sách học sinh cho lớp {selectedClass} (.xlsx)</span>
             </button>
             <button
               onClick={downloadSampleStudentExcel}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-4 py-2.5 rounded-xl border border-slate-300 flex items-center space-x-1.5 transition-all"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-4 py-2.5 rounded-xl border border-slate-300 flex items-center space-x-1.5 transition-all cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Tải file Excel mẫu học sinh</span>
@@ -776,9 +847,9 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                   <th className="py-3 px-3">Mã HS</th>
                   <th className="py-3 px-4">Họ và tên học sinh</th>
                   <th className="py-3 px-4 text-center">Lớp</th>
-                  <th className="py-3 px-4 text-center">Vị trí máy</th>
-                  <th className="py-3 px-4">Mã đăng nhập LAN</th>
+                  <th className="py-3 px-4">Mã đăng nhập</th>
                   <th className="py-3 px-4">Mật khẩu ban đầu</th>
+                  <th className="py-3 px-4 text-center">Điểm thi đã lưu</th>
                   <th className="py-3 px-4 text-center">Tác vụ</th>
                 </tr>
               </thead>
@@ -793,6 +864,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                 ) : (
                   filteredStudents.map((student, idx) => {
                     const isSelected = selectedStudentIds.has(student.id);
+                    const scoreInfo = getStudentDisplayScore(student);
                     return (
                       <tr
                         key={student.id}
@@ -825,13 +897,6 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                             {student.className}
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium">
-                            {student.workstationNumber
-                              ? `Máy ${String(student.workstationNumber).padStart(2, '0')}`
-                              : 'Tự do'}
-                          </span>
-                        </td>
                         <td className="py-3 px-4">
                           <code className="bg-emerald-50 text-emerald-800 font-mono font-bold px-2 py-0.5 rounded border border-emerald-200">
                             {student.loginCode}
@@ -840,18 +905,38 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
                         <td className="py-3 px-4">
                           <span className="text-slate-500 font-mono">123456</span>
                         </td>
+                        <td
+                          data-testid={`student-score-cell-${student.loginCode}`}
+                          className="py-3 px-4 text-center"
+                        >
+                          {scoreInfo ? (
+                            <div className="inline-flex flex-col items-center">
+                              <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 font-extrabold px-2.5 py-0.5 rounded-full text-xs">
+                                {scoreInfo.score} điểm
+                              </span>
+                              <span
+                                className="text-[10px] text-slate-500 truncate max-w-[160px] mt-0.5"
+                                title={scoreInfo.examTitle}
+                              >
+                                {scoreInfo.examTitle}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-[11px] italic">Chưa có điểm</span>
+                          )}
+                        </td>
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center space-x-1">
                             <button
                               onClick={() => handleResetPassword(student.id, student.fullName)}
-                              className="text-amber-600 hover:text-amber-700 p-1.5 rounded hover:bg-amber-50"
+                              className="text-amber-600 hover:text-amber-700 p-1.5 rounded hover:bg-amber-50 cursor-pointer"
                               title="Đặt lại mật khẩu về 123456"
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleDeleteStudent(student.id)}
-                              className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50"
+                              className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50 cursor-pointer"
                               title="Xóa học sinh"
                             >
                               <Trash2 className="w-3.5 h-3.5" />

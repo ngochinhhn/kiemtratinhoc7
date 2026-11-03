@@ -1,13 +1,13 @@
 import { Exam, SystemConfig } from '../types';
 
-// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T00:58:35.949Z
-export const SEED_SYNC_ID = "sync_1793667515949";
-export const SEED_UPDATED_AT = "2026-11-03T00:58:35.949Z";
+// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T03:13:11.061Z
+export const SEED_SYNC_ID = "sync_1793675591061";
+export const SEED_UPDATED_AT = "2026-11-03T03:13:11.061Z";
 
 export const SEED_CONFIG: Partial<SystemConfig> = {
   "serverIp": "192.168.1.15",
   "serverPort": 3000,
-  "schoolName": "Trường THCS Thụy Lâm",
+  "schoolName": "Trường TH & THCS Thụy Lâm",
   "subjectName": "Tin học 7 - Bộ sách Kết nối tri thức với cuộc sống",
   "activeExamId": "exam_1793627619414",
   "autoSaveIntervalSeconds": 5
@@ -85,14 +85,19 @@ export const SEED_EXAMS: Exam[] = [
       "showAnswerGrid": false
     },
     "createdAt": "2026-11-02T13:53:39.414Z",
-    "startTime": "2026-11-02T13:54:24.953Z"
+    "startTime": "2026-11-03T01:15:54.117Z",
+    "endTime": "2026-11-03T01:16:00.501Z"
   },
   {
     "id": "exam_1793592657050",
     "title": "Đề kiểm tra đánh giá giữa học kì I - Tin học 7",
     "type": "giua_ky",
     "classes": [
-      "7A4"
+      "7A4",
+      "7A10",
+      "7A5",
+      "7A8",
+      "7A9"
     ],
     "durationMinutes": 35,
     "totalQuestions": 20,
@@ -119,7 +124,7 @@ export const SEED_EXAMS: Exam[] = [
       "pdf_import_1793437071766_41",
       "pdf_import_1793437071766_45"
     ],
-    "status": "chua_mo",
+    "status": "tam_dung",
     "allowReviewAfterSubmit": false,
     "shuffleQuestions": true,
     "shuffleOptions": false,
@@ -134,7 +139,8 @@ export const SEED_EXAMS: Exam[] = [
       "showAnswerGrid": false
     },
     "createdAt": "2026-11-02T04:10:57.050Z",
-    "updatedAt": "2026-11-02T15:09:46.921Z"
+    "updatedAt": "2026-11-03T01:06:31.262Z",
+    "startTime": "2026-11-03T01:16:03.762Z"
   },
   {
     "id": "exam_1793592601163",
@@ -168,7 +174,7 @@ export const SEED_EXAMS: Exam[] = [
       "pdf_import_1793437071766_40",
       "pdf_import_1793437071766_46"
     ],
-    "status": "chua_mo",
+    "status": "tam_dung",
     "allowReviewAfterSubmit": true,
     "shuffleQuestions": true,
     "shuffleOptions": false,
@@ -182,7 +188,8 @@ export const SEED_EXAMS: Exam[] = [
       "showStudentInfo": true,
       "showAnswerGrid": false
     },
-    "createdAt": "2026-11-02T04:10:01.163Z"
+    "createdAt": "2026-11-02T04:10:01.163Z",
+    "startTime": "2026-11-03T00:59:48.157Z"
   },
   {
     "id": "exam_1793592576675",

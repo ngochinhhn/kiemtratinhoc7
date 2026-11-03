@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
-import { ExamResultSummary, Question, Student, StudentExamPaper, StudentExamSession } from '../types';
+import { Exam, ExamResultSummary, Question, Student, StudentExamPaper, StudentExamSession } from '../types';
 
 /**
  * Tải tệp Excel mẫu danh sách học sinh
@@ -111,15 +111,71 @@ export async function downloadSampleClassListExcel(): Promise<void> {
 }
 
 /**
- * Xuất danh sách tài khoản đăng nhập của học sinh (kèm mật khẩu mặc định 123456)
+ * Chuyển số chỉ mục cột (1-based) sang ký tự cột Excel (A, B, ..., Z, AA, AB...)
  */
-export async function exportStudentAccountsExcel(students: Student[], schoolName: string): Promise<void> {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('TaiKhoanHocSinh');
+function indexToExcelColLetters(colIndex: number): string {
+  let num = colIndex;
+  let letters = '';
+  while (num > 0) {
+    const rem = (num - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    num = Math.floor((num - 1) / 26);
+  }
+  return letters || 'A';
+}
 
-  worksheet.mergeCells('A1:G1');
+/**
+ * Xuất danh sách lớp học sinh kèm điểm số các kỳ thi và tài khoản đăng nhập ra tệp Excel (.xlsx)
+ */
+export async function exportStudentAccountsExcel(
+  students: Student[],
+  schoolName: string,
+  exams: Exam[] = [],
+  sessions: Record<string, StudentExamSession> = {},
+  classFilter?: string
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  const targetStudents =
+    classFilter && classFilter !== 'all'
+      ? students.filter((s) => s.className === classFilter)
+      : students;
+
+  const targetClasses = new Set(targetStudents.map((s) => s.className));
+
+  // Xác định các kỳ thi liên quan đến danh sách lớp đang xuất (hoặc có điểm của học sinh)
+  const relevantExams = exams.filter((ex) => {
+    const assignedToClass = ex.classes.some((c) => targetClasses.has(c));
+    const hasScore = targetStudents.some(
+      (st) =>
+        st.examScores?.[ex.id]?.score !== undefined ||
+        sessions[`${st.id}_${ex.id}`]?.score !== undefined
+    );
+    return assignedToClass || hasScore;
+  });
+
+  const sheetName =
+    classFilter && classFilter !== 'all' ? `DanhSach_Lop_${classFilter}` : 'DanhSachLop_DiemThi';
+  const worksheet = workbook.addWorksheet(sheetName);
+
+  const baseHeaders = [
+    'STT',
+    'Mã học sinh',
+    'Họ và tên học sinh',
+    'Lớp',
+    'Mã đăng nhập',
+    'Mật khẩu mặc định',
+    'Điểm thi mới nhất',
+    'Kỳ thi gần nhất',
+  ];
+  const examHeaders = relevantExams.map((ex) => `Điểm: ${ex.title}`);
+  const allHeaders = [...baseHeaders, ...examHeaders];
+  const lastColLetter = indexToExcelColLetters(allHeaders.length);
+
+  worksheet.mergeCells(`A1:${lastColLetter}1`);
   const titleCell = worksheet.getCell('A1');
-  titleCell.value = `${schoolName.toUpperCase()} - DANH SÁCH TÀI KHOẢN HỌC SINH MÔN TIN HỌC 7`;
+  const classTitlePart =
+    classFilter && classFilter !== 'all' ? `LỚP ${classFilter.toUpperCase()}` : 'TOÀN TRƯỜNG';
+  titleCell.value = `${schoolName.toUpperCase()} - DANH SÁCH HỌC SINH & BẢNG ĐIỂM MÔN TIN HỌC 7 (${classTitlePart})`;
   titleCell.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
   titleCell.fill = {
     type: 'pattern',
@@ -129,48 +185,62 @@ export async function exportStudentAccountsExcel(students: Student[], schoolName
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
   worksheet.getRow(1).height = 32;
 
-  worksheet.getRow(2).values = [
-    'STT',
-    'Mã học sinh',
-    'Họ và tên học sinh',
-    'Lớp',
-    'Số máy LAN',
-    'Mã đăng nhập',
-    'Mật khẩu ban đầu',
-  ];
+  worksheet.getRow(2).values = allHeaders;
   worksheet.getRow(2).font = { name: 'Arial', size: 10, bold: true };
-  worksheet.getRow(2).alignment = { horizontal: 'center', vertical: 'middle' };
+  worksheet.getRow(2).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
   worksheet.getRow(2).fill = {
     type: 'pattern',
     pattern: 'solid',
     fgColor: { argb: 'FFEFF6FF' },
   };
-  worksheet.getRow(2).height = 24;
+  worksheet.getRow(2).height = 28;
 
-  students.forEach((student, idx) => {
+  targetStudents.forEach((student, idx) => {
+    // Tính điểm mới nhất từ student.latestScore hoặc từ sessions
+    let latestScoreVal: number | string =
+      student.latestScore !== undefined ? student.latestScore : '';
+    let latestExamTitleVal = student.latestExamTitle || '';
+
+    const perExamScores = relevantExams.map((ex) => {
+      const savedScore = student.examScores?.[ex.id]?.score;
+      const sessionScore = sessions[`${student.id}_${ex.id}`]?.score;
+      const finalScore = savedScore !== undefined ? savedScore : sessionScore;
+      if (finalScore !== undefined && latestScoreVal === '') {
+        latestScoreVal = finalScore;
+        latestExamTitleVal = ex.title;
+      }
+      return finalScore !== undefined ? finalScore : '';
+    });
+
     worksheet.addRow([
       idx + 1,
       student.studentIdCode || `HS7${String(idx + 1).padStart(3, '0')}`,
       student.fullName,
       student.className,
-      student.workstationNumber ? `Máy ${String(student.workstationNumber).padStart(2, '0')}` : 'Tự do',
       student.loginCode,
       '123456',
+      latestScoreVal !== '' ? latestScoreVal : 'Chưa thi',
+      latestExamTitleVal || '-',
+      ...perExamScores,
     ]);
   });
 
   worksheet.columns = [
-    { width: 8 },
+    { width: 7 },
     { width: 15 },
     { width: 28 },
     { width: 10 },
-    { width: 14 },
-    { width: 18 },
-    { width: 18 },
+    { width: 16 },
+    { width: 16 },
+    { width: 16 },
+    { width: 32 },
+    ...relevantExams.map(() => ({ width: 22 })),
   ];
 
   const buffer = await workbook.xlsx.writeBuffer();
-  triggerDownload(buffer, 'Danh_Sach_Tai_Khoan_Hoc_Sinh_Tin7.xlsx');
+  const fileSuffix =
+    classFilter && classFilter !== 'all' ? `Lop_${classFilter}` : 'Toan_Truong';
+  triggerDownload(buffer, `Danh_Sach_Lop_Va_Diem_Tin7_${fileSuffix}.xlsx`);
 }
 
 /**

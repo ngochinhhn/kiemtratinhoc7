@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShieldCheck,
   GraduationCap,
@@ -25,20 +25,46 @@ import {
 interface LoginViewProps {
   students: Student[];
   activeExam: Exam | null;
+  activeExams?: Exam[];
   schoolName: string;
   onLoginTeacher: () => void;
-  onLoginStudent: (student: Student) => void;
+  onLoginStudent: (student: Student, selectedExamId?: string) => void;
   onOpenHelp: () => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
   students,
   activeExam,
+  activeExams = [],
   onLoginTeacher,
   onLoginStudent,
   onOpenHelp,
 }) => {
   const [loginMode, setLoginMode] = useState<Role>('giaovien');
+
+  // Danh sách các kỳ thi đang mở đồng thời
+  const runningExams = useMemo(() => {
+    if (activeExams.length > 0) return activeExams;
+    return activeExam ? [activeExam] : [];
+  }, [activeExams, activeExam]);
+
+  // Kỳ thi học sinh chọn để tham dự
+  const [selectedExamId, setSelectedExamId] = useState<string>(
+    runningExams[0]?.id || activeExam?.id || ''
+  );
+
+  useEffect(() => {
+    if (runningExams.length === 0) {
+      setSelectedExamId('');
+    } else if (!selectedExamId || !runningExams.some((e) => e.id === selectedExamId)) {
+      setSelectedExamId(runningExams[0].id);
+    }
+  }, [runningExams, selectedExamId]);
+
+  const currentSelectedExam = useMemo(
+    () => runningExams.find((e) => e.id === selectedExamId) || runningExams[0] || null,
+    [runningExams, selectedExamId]
+  );
 
   // State đăng nhập Giáo viên
   const [teacherUsername, setTeacherUsername] = useState('');
@@ -46,23 +72,36 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [showTeacherPassword, setShowTeacherPassword] = useState(false);
   const [teacherError, setTeacherError] = useState('');
 
-  // State đăng nhập Học sinh
+  // State đăng nhập Học sinh (Chọn kỳ thi + Chọn lớp + Mã đăng nhập + Mật khẩu)
+  const [selectedClass, setSelectedClass] = useState<string>(
+    currentSelectedExam?.classes?.[0] || ''
+  );
   const [studentCode, setStudentCode] = useState('');
   const [studentPassword, setStudentPassword] = useState('123456');
   const [showStudentPassword, setShowStudentPassword] = useState(false);
   const [studentError, setStudentError] = useState('');
 
-  // Lấy đúng 4 học sinh đầu tiên của lớp được phân công trong kỳ thi đang mở
+  useEffect(() => {
+    if (currentSelectedExam?.classes && currentSelectedExam.classes.length > 0) {
+      if (!selectedClass || !currentSelectedExam.classes.includes(selectedClass)) {
+        setSelectedClass(currentSelectedExam.classes[0]);
+      }
+    } else {
+      setSelectedClass('');
+    }
+  }, [currentSelectedExam, selectedClass]);
+
+  // Lấy đúng 4 học sinh đầu tiên của lớp đang chọn trong kỳ thi đang chọn
   const quickSelectStudents = useMemo(
-    () => getQuickSelectStudentsForExam(students, activeExam, 4),
-    [students, activeExam]
+    () => getQuickSelectStudentsForExam(students, currentSelectedExam, 4, selectedClass),
+    [students, currentSelectedExam, selectedClass]
   );
 
   const handleTeacherSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const res = authenticateTeacher(teacherUsername, teacherPassword);
     if (!res.ok) {
-      setTeacherError(res.error || 'Đăng nhập không thành công.');
+      setTeacherError(res.error || 'Tên đăng nhập hoặc mật khẩu không chính xác.');
       return;
     }
     setTeacherError('');
@@ -72,19 +111,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const handleStudentSubmit = (
     e?: React.FormEvent,
     overrideCode?: string,
-    overridePass?: string
+    overridePass?: string,
+    overrideClass?: string
   ) => {
     if (e) e.preventDefault();
     const codeToCheck = overrideCode !== undefined ? overrideCode : studentCode;
     const passToCheck = overridePass !== undefined ? overridePass : studentPassword;
+    const classToCheck = overrideClass !== undefined ? overrideClass : selectedClass;
 
-    const res = authenticateStudent(codeToCheck, passToCheck, students, activeExam);
+    const res = authenticateStudent(
+      codeToCheck,
+      passToCheck,
+      students,
+      currentSelectedExam,
+      classToCheck
+    );
     if (!res.ok || !res.student) {
       setStudentError(res.error || 'Đăng nhập học sinh không thành công.');
       return;
     }
     setStudentError('');
-    onLoginStudent(res.student);
+    onLoginStudent(res.student, currentSelectedExam?.id);
   };
 
   return (
@@ -102,7 +149,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             Môn Tin học 7 – Bộ sách Kết nối tri thức với cuộc sống
           </p>
           <p className="text-[11px] text-amber-300 font-semibold">
-            Trường TH &amp; THCS Thụy Lâm - Thư Lâm
+            Trường TH &amp; THCS Thụy Lâm - Xã Thư Lâm - TP Hà Nội
           </p>
         </div>
 
@@ -188,7 +235,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                     type="text"
                     value={teacherUsername}
                     onChange={(e) => setTeacherUsername(e.target.value)}
-                    placeholder="Nhập tài khoản (Admin)"
+                    placeholder="Nhập tài khoản giáo viên"
                     autoComplete="username"
                     className="w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
@@ -238,7 +285,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
-          ) : !activeExam ? (
+          ) : !currentSelectedExam ? (
             /* THÔNG BÁO KHI KHÔNG CÓ KỲ THI NÀO ĐANG MỞ */
             <div
               data-testid="student-login-no-exam"
@@ -263,9 +310,45 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </div>
             </div>
           ) : (
-            /* FORM ĐĂNG NHẬP HỌC SINH + HIỂN THỊ KỲ THI ĐANG MỞ */
+            /* FORM ĐĂNG NHẬP HỌC SINH + CHỌN KỲ THI THAM DỰ */
             <div className="space-y-4">
-              {/* Thông tin kỳ thi mà Giáo viên đang mở thi */}
+              {/* Ô chọn kỳ thi tham dự (hỗ trợ nhiều kỳ thi diễn ra đồng thời) */}
+              <div>
+                <label
+                  htmlFor="student-login-exam"
+                  className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between"
+                >
+                  <span>Chọn kỳ thi tham dự:</span>
+                  <span className="text-[11px] font-semibold text-emerald-700">
+                    Đang mở: {runningExams.length} kỳ thi
+                  </span>
+                </label>
+                <div className="relative">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    id="student-login-exam"
+                    data-testid="select-student-exam"
+                    value={currentSelectedExam.id}
+                    onChange={(e) => {
+                      const nextExam = runningExams.find((ex) => ex.id === e.target.value);
+                      setSelectedExamId(e.target.value);
+                      if (nextExam?.classes?.[0]) {
+                        setSelectedClass(nextExam.classes[0]);
+                      }
+                      setStudentError('');
+                    }}
+                    className="w-full pl-10 pr-3 py-2.5 border border-emerald-300 rounded-xl font-bold text-xs sm:text-sm text-slate-900 bg-emerald-50/40 focus:ring-2 focus:ring-emerald-500 focus:outline-none cursor-pointer"
+                  >
+                    {runningExams.map((ex) => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.title} (Lớp: {ex.classes.join(', ')} • {ex.durationMinutes} phút)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Thông tin kỳ thi mà học sinh đang chọn */}
               <div
                 data-testid="student-login-active-exam"
                 className="bg-emerald-50/90 border border-emerald-200 rounded-xl p-4 space-y-2"
@@ -273,32 +356,36 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center space-x-1.5 bg-emerald-600 text-white text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full">
                     <CheckCircle2 className="w-3 h-3" />
-                    <span>Kỳ thi Giáo viên đang mở</span>
+                    <span>
+                      {runningExams.length > 1
+                        ? `Kỳ thi đã chọn (${runningExams.findIndex((e) => e.id === currentSelectedExam.id) + 1}/${runningExams.length})`
+                        : 'Kỳ thi Giáo viên đang mở'}
+                    </span>
                   </span>
                   <span className="text-[11px] font-bold text-emerald-800">
-                    Thang điểm {activeExam.maxScore}
+                    Thang điểm {currentSelectedExam.maxScore}
                   </span>
                 </div>
                 <h2 className="text-sm font-extrabold text-slate-900 leading-snug">
-                  {activeExam.title}
+                  {currentSelectedExam.title}
                 </h2>
                 <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700 pt-0.5">
                   <span className="inline-flex items-center space-x-1">
                     <Clock className="w-3.5 h-3.5 text-emerald-700" />
                     <span>
-                      Thời gian: <strong>{activeExam.durationMinutes} phút</strong>
+                      Thời gian: <strong>{currentSelectedExam.durationMinutes} phút</strong>
                     </span>
                   </span>
                   <span className="inline-flex items-center space-x-1">
                     <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
                     <span>
-                      Số câu: <strong>{activeExam.totalQuestions} câu</strong>
+                      Số câu: <strong>{currentSelectedExam.totalQuestions} câu</strong>
                     </span>
                   </span>
                   <span className="inline-flex items-center space-x-1">
                     <Users className="w-3.5 h-3.5 text-emerald-700" />
                     <span>
-                      Lớp: <strong>{activeExam.classes.join(', ')}</strong>
+                      Lớp: <strong>{currentSelectedExam.classes.join(', ')}</strong>
                     </span>
                   </span>
                 </div>
@@ -315,29 +402,65 @@ export const LoginView: React.FC<LoginViewProps> = ({
               )}
 
               <form onSubmit={(e) => handleStudentSubmit(e)} className="space-y-3.5">
-                <div>
-                  <label
-                    htmlFor="student-login-code"
-                    className="block text-xs font-bold text-slate-700 mb-1"
-                  >
-                    Mã đăng nhập của học sinh:
-                  </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      id="student-login-code"
-                      data-testid="input-student-code"
-                      type="text"
-                      value={studentCode}
-                      onChange={(e) => setStudentCode(e.target.value)}
-                      placeholder="Ví dụ: nvan, ttmanh, lhphuc..."
-                      className="w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-xl font-mono text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                    />
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                  {/* Ô Chọn lớp bên cạnh ô Mã đăng nhập */}
+                  <div className="sm:col-span-5">
+                    <label
+                      htmlFor="student-login-class"
+                      className="block text-xs font-bold text-slate-700 mb-1"
+                    >
+                      Chọn lớp học:
+                    </label>
+                    <div className="relative">
+                      <Users className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <select
+                        id="student-login-class"
+                        data-testid="select-student-class"
+                        value={selectedClass}
+                        onChange={(e) => {
+                          setSelectedClass(e.target.value);
+                          setStudentError('');
+                        }}
+                        className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-xl font-bold text-sm text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none cursor-pointer"
+                      >
+                        {currentSelectedExam.classes.map((cls) => (
+                          <option key={cls} value={cls}>
+                            Lớp {cls}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Nhập mã đăng nhập do Giáo viên cấp trong danh sách lớp {activeExam.classes.join(', ')}
-                  </p>
+
+                  {/* Ô Mã đăng nhập của học sinh */}
+                  <div className="sm:col-span-7">
+                    <label
+                      htmlFor="student-login-code"
+                      className="block text-xs font-bold text-slate-700 mb-1"
+                    >
+                      Mã đăng nhập của học sinh:
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="student-login-code"
+                        data-testid="input-student-code"
+                        type="text"
+                        value={studentCode}
+                        onChange={(e) => setStudentCode(e.target.value)}
+                        placeholder="Ví dụ: nvan, ttmanh, lhphuc..."
+                        className="w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-xl font-mono text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
                 </div>
+                <p className="text-[11px] text-slate-400 -mt-2">
+                  Chọn đúng kỳ thi, lớp học và nhập mã đăng nhập (Lớp đang chọn:{' '}
+                  <strong className="text-slate-600">
+                    {selectedClass || currentSelectedExam.classes[0]}
+                  </strong>
+                  )
+                </p>
 
                 <div>
                   <label
@@ -382,14 +505,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </button>
               </form>
 
-              {/* Gợi ý chọn nhanh 4 học sinh đầu tiên trong danh sách của đúng lớp được mở thi */}
+              {/* Gợi ý chọn nhanh 4 học sinh đầu tiên trong danh sách của đúng lớp đang chọn */}
               {quickSelectStudents.length > 0 && (
                 <div
                   data-testid="quick-select-students-section"
                   className="pt-3 border-t border-slate-100 space-y-2"
                 >
                   <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block text-center">
-                    Gợi ý chọn nhanh 4 học sinh Lớp {activeExam.classes.join(', ')} (Mật khẩu: 123456):
+                    Gợi ý chọn nhanh 4 học sinh Lớp {selectedClass || currentSelectedExam.classes[0]} (Mật khẩu: 123456):
                   </span>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {quickSelectStudents.map((s) => (
@@ -398,9 +521,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
                         type="button"
                         data-testid={`demo-student-${s.loginCode}`}
                         onClick={() => {
+                          setSelectedClass(s.className);
                           setStudentCode(s.loginCode);
                           setStudentPassword('123456');
-                          handleStudentSubmit(undefined, s.loginCode, '123456');
+                          handleStudentSubmit(undefined, s.loginCode, '123456', s.className);
                         }}
                         className="p-2 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-lg text-left transition-colors cursor-pointer"
                       >

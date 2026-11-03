@@ -13,6 +13,26 @@ export interface StudentAuthResult {
 }
 
 /**
+ * Lấy danh sách tất cả các kỳ thi đang thực sự diễn ra (status === 'dang_dien_ra').
+ * Cho phép nhiều kỳ thi diễn ra đồng thời để học sinh lựa chọn kỳ thi tham dự lúc đăng nhập.
+ */
+export function getActiveRunningExams(
+  exams: Exam[],
+  preferredExamId?: string | null
+): Exam[] {
+  if (!Array.isArray(exams) || exams.length === 0) return [];
+  const running = exams.filter((e) => e && e.status === 'dang_dien_ra');
+  if (running.length <= 1 || !preferredExamId) return running;
+
+  const preferredIdx = running.findIndex((e) => e.id === preferredExamId);
+  if (preferredIdx > 0) {
+    const [preferred] = running.splice(preferredIdx, 1);
+    return [preferred, ...running];
+  }
+  return running;
+}
+
+/**
  * Tìm kỳ thi đang thực sự diễn ra (status === 'dang_dien_ra').
  * Nếu không có kỳ thi nào đang mở, trả về null (tuyệt đối không fallback sang đề thi đã đóng/tạm dừng).
  */
@@ -20,24 +40,19 @@ export function getActiveRunningExam(
   exams: Exam[],
   activeExamId?: string | null
 ): Exam | null {
-  if (!Array.isArray(exams) || exams.length === 0) return null;
-  if (activeExamId) {
-    const matched = exams.find(
-      (e) => e.id === activeExamId && e.status === 'dang_dien_ra'
-    );
-    if (matched) return matched;
-  }
-  return exams.find((e) => e.status === 'dang_dien_ra') || null;
+  const running = getActiveRunningExams(exams, activeExamId);
+  return running[0] || null;
 }
 
 /**
  * Lấy danh sách gợi ý chọn nhanh học sinh (mặc định 4 học sinh đầu tiên)
- * của đúng lớp được phân công trong kỳ thi đang mở.
+ * của đúng lớp được chọn hoặc lớp được phân công trong kỳ thi đang mở.
  */
 export function getQuickSelectStudentsForExam(
   students: Student[],
   activeExam: Exam | null,
-  limit: number = 4
+  limit: number = 4,
+  selectedClass?: string
 ): Student[] {
   if (!activeExam || activeExam.status !== 'dang_dien_ra') {
     return [];
@@ -45,6 +60,13 @@ export function getQuickSelectStudentsForExam(
   const assignedClasses = Array.isArray(activeExam.classes)
     ? activeExam.classes.map((c) => c.trim().toLowerCase())
     : [];
+
+  const targetClass = selectedClass?.trim().toLowerCase();
+  if (targetClass && (assignedClasses.length === 0 || assignedClasses.includes(targetClass))) {
+    return students
+      .filter((s) => s.className.trim().toLowerCase() === targetClass)
+      .slice(0, limit);
+  }
 
   if (assignedClasses.length === 0) {
     return students.slice(0, limit);
@@ -56,14 +78,15 @@ export function getQuickSelectStudentsForExam(
 }
 
 /**
- * Xác thực tài khoản Giáo viên (Tài khoản: Admin, Mật khẩu: admin123)
+ * Xác thực tài khoản Giáo viên.
+ * Tuyệt đối không hiển thị tên tài khoản hoặc mật khẩu mặc định khi nhập sai.
  */
 export function authenticateTeacher(username: string, password: string): TeacherAuthResult {
   const trimmedUser = username.trim();
   if (!trimmedUser) {
     return {
       ok: false,
-      error: 'Vui lòng nhập tên tài khoản giáo viên (Admin).',
+      error: 'Vui lòng nhập tên đăng nhập giáo viên.',
     };
   }
   if (!password) {
@@ -75,7 +98,7 @@ export function authenticateTeacher(username: string, password: string): Teacher
   if (trimmedUser.toLowerCase() !== 'admin' || password !== 'admin123') {
     return {
       ok: false,
-      error: 'Tài khoản hoặc mật khẩu không chính xác. (Mặc định: Admin / admin123)',
+      error: 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!',
     };
   }
   return {
@@ -85,14 +108,15 @@ export function authenticateTeacher(username: string, password: string): Teacher
 }
 
 /**
- * Xác thực tài khoản Học sinh theo mã đăng nhập và mật khẩu mặc định (123456).
- * Kiểm tra kỳ thi đang mở và lớp được phân công (nếu truyền activeExam).
+ * Xác thực tài khoản Học sinh theo Lớp học, Mã đăng nhập và mật khẩu mặc định (123456).
+ * Việc kết hợp Lớp học + Mã đăng nhập giúp tránh trùng mã đăng nhập khi nhiều lớp thi chung một đề.
  */
 export function authenticateStudent(
   loginCode: string,
   password: string,
   students: Student[],
-  activeExam?: Exam | null
+  activeExam?: Exam | null,
+  selectedClass?: string
 ): StudentAuthResult {
   if (activeExam === null) {
     return {
@@ -102,6 +126,22 @@ export function authenticateStudent(
     };
   }
 
+  const normalizedClass = selectedClass ? selectedClass.trim() : '';
+  if (
+    activeExam &&
+    Array.isArray(activeExam.classes) &&
+    activeExam.classes.length > 0 &&
+    normalizedClass
+  ) {
+    const allowedClasses = activeExam.classes.map((c) => c.trim().toLowerCase());
+    if (!allowedClasses.includes(normalizedClass.toLowerCase())) {
+      return {
+        ok: false,
+        error: `Lớp ${normalizedClass} không thuộc danh sách lớp tham gia kỳ thi này (Lớp ${activeExam.classes.join(', ')}).`,
+      };
+    }
+  }
+
   const code = loginCode.trim().toLowerCase();
   if (!code) {
     return {
@@ -109,11 +149,31 @@ export function authenticateStudent(
       error: 'Vui lòng nhập mã đăng nhập học sinh.',
     };
   }
-  const student = students.find((s) => s.loginCode.toLowerCase() === code);
+
+  // Nếu có chọn lớp cụ thể, tìm chính xác học sinh thuộc lớp đó để tránh trùng mã giữa các lớp
+  const student = normalizedClass
+    ? students.find(
+        (s) =>
+          s.loginCode.toLowerCase() === code &&
+          s.className.trim().toLowerCase() === normalizedClass.toLowerCase()
+      )
+    : students.find((s) => s.loginCode.toLowerCase() === code);
+
   if (!student) {
+    const existsInOtherClass = normalizedClass
+      ? students.find((s) => s.loginCode.toLowerCase() === code)
+      : undefined;
+    if (existsInOtherClass) {
+      return {
+        ok: false,
+        error: `Mã đăng nhập "${loginCode.trim()}" không thuộc Lớp ${normalizedClass}. Em vui lòng chọn đúng lớp của mình!`,
+      };
+    }
     return {
       ok: false,
-      error: 'Mã đăng nhập không tồn tại trong danh sách lớp.',
+      error: normalizedClass
+        ? `Mã đăng nhập "${loginCode.trim()}" không tồn tại trong danh sách Lớp ${normalizedClass}.`
+        : 'Mã đăng nhập không tồn tại trong danh sách lớp.',
     };
   }
 
@@ -135,7 +195,7 @@ export function authenticateStudent(
   if (password !== expectedPassword && password !== '123456') {
     return {
       ok: false,
-      error: 'Mật khẩu không chính xác. Mật khẩu mặc định là: 123456',
+      error: 'Mật khẩu không chính xác. Vui lòng kiểm tra lại!',
     };
   }
   return {

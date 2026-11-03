@@ -369,64 +369,70 @@ export class AppStorage {
       safeSetItem(KEYS.CONFIG, DEFAULT_CONFIG);
     }
 
-    // Tự sinh cấu hình đề và phiên thi cho đề thi đang diễn ra mặc định (để học sinh vào thi được ngay)
+    // Tự sinh cấu hình đề và phiên thi cho tất cả các đề thi đang diễn ra (hỗ trợ nhiều kỳ thi diễn ra đồng thời)
     const exams = this.getExams();
-    const activeExam = exams.find((e) => e.status === 'dang_dien_ra') || exams[0];
-    if (activeExam) {
+    const runningExams = exams.filter((e) => e.status === 'dang_dien_ra');
+    const targetExams = runningExams.length > 0 ? runningExams : exams[0] ? [exams[0]] : [];
+
+    if (targetExams.length > 0) {
       const papers = this.getPapers();
       const students = this.getStudents();
-      const eligibleStudents = students.filter((s) => activeExam.classes.includes(s.className));
       const questions = this.getQuestions();
       const questionMap = new Map(questions.map((q) => [q.id, q]));
-      const examQuestions = activeExam.questionIds
-        .map((id) => questionMap.get(id))
-        .filter((q): q is Question => Boolean(q));
+      const sessions = this.getSessions();
+      let hasChanges = false;
 
-      if (eligibleStudents.length > 0 && examQuestions.length > 0) {
-        let hasChanges = false;
-        const sessions = this.getSessions();
+      for (const activeExam of targetExams) {
+        const eligibleStudents = students.filter((s) => activeExam.classes.includes(s.className));
+        const examQuestions = activeExam.questionIds
+          .map((id) => questionMap.get(id))
+          .filter((q): q is Question => Boolean(q));
 
-        eligibleStudents.forEach((student, idx) => {
-          const key = `${student.id}_${activeExam.id}`;
-          const existingPaper = papers[key];
-          const needsRebuildPaper =
-            !existingPaper ||
-            existingPaper.questionOrder.length !== examQuestions.length ||
-            !examQuestions.every((eq) => existingPaper.questionOrder.includes(eq.id));
+        if (eligibleStudents.length > 0 && examQuestions.length > 0) {
+          eligibleStudents.forEach((student, idx) => {
+            const key = `${student.id}_${activeExam.id}`;
+            const existingPaper = papers[key];
+            const needsRebuildPaper =
+              !existingPaper ||
+              existingPaper.questionOrder.length !== examQuestions.length ||
+              !examQuestions.every((eq) => existingPaper.questionOrder.includes(eq.id));
 
-          if (needsRebuildPaper) {
-            const paper = createStudentExamPaper(
-              student.id,
-              activeExam.id,
-              idx,
-              examQuestions,
-              activeExam.shuffleQuestions,
-              activeExam.shuffleOptions
-            );
-            papers[key] = paper;
-            hasChanges = true;
-          }
+            if (needsRebuildPaper) {
+              const paper = createStudentExamPaper(
+                student.id,
+                activeExam.id,
+                idx,
+                examQuestions,
+                activeExam.shuffleQuestions,
+                activeExam.shuffleOptions
+              );
+              papers[key] = paper;
+              hasChanges = true;
+            }
 
-          if (!sessions[key]) {
-            sessions[key] = {
-              id: `sess_${student.id}_${activeExam.id}`,
-              examId: activeExam.id,
-              studentId: student.id,
-              paperCode: papers[key].paperCode,
-              status: idx === 0 ? 'da_dang_nhap' : 'chua_dang_nhap',
-              timeRemainingSeconds: activeExam.durationMinutes * 60,
-              answers: {},
-              lastHeartbeat: new Date().toISOString(),
-              workstationIp: `192.168.1.${100 + idx}`,
-            };
-            hasChanges = true;
-          }
-        });
-
-        if (hasChanges) {
-          this.savePapers(papers);
-          this.saveSessions(sessions);
+            if (!sessions[key]) {
+              sessions[key] = {
+                id: `sess_${student.id}_${activeExam.id}`,
+                examId: activeExam.id,
+                studentId: student.id,
+                paperCode: papers[key].paperCode,
+                status: idx === 0 ? 'da_dang_nhap' : 'chua_dang_nhap',
+                timeRemainingSeconds: activeExam.durationMinutes * 60,
+                answers: {},
+                lastHeartbeat: new Date().toISOString(),
+                workstationIp: `192.168.1.${100 + idx}`,
+              };
+              hasChanges = true;
+            }
+          });
         }
+      }
+
+      if (hasChanges) {
+        this.savePapers(papers);
+        this.saveSessions(sessions);
+      } else {
+        this.syncStudentScoresFromSessions(sessions, false);
       }
     }
   }
@@ -713,12 +719,115 @@ export class AppStorage {
     safeSetItem(KEYS.PAPERS, compacted);
   }
 
+  /**
+   * Đồng bộ điểm số của học sinh từ các phiên thi đã nộp bài vào trực tiếp danh sách học sinh (KEYS.STUDENTS)
+   * và tự động cập nhật vào file danh sách lớp (src/data/seedStudents.ts).
+   */
+  private syncStudentScoresFromSessions(
+    sessions: Record<string, StudentExamSession>,
+    triggerRepoSync: boolean = true
+  ): boolean {
+    const students = this.getStudents();
+    if (students.length === 0) return false;
+
+    const exams = this.getExams();
+    const examMap = new Map(exams.map((e) => [e.id, e]));
+    let studentsChanged = false;
+
+    // Gom các phiên đã nộp bài theo studentId
+    const submittedByStudent = new Map<string, StudentExamSession[]>();
+    for (const sess of Object.values(sessions)) {
+      if (sess && sess.status === 'da_nop_bai' && typeof sess.score === 'number') {
+        const list = submittedByStudent.get(sess.studentId) || [];
+        list.push(sess);
+        submittedByStudent.set(sess.studentId, list);
+      }
+    }
+
+    if (submittedByStudent.size === 0) return false;
+
+    const updatedStudents = students.map((student) => {
+      const studentSessions = submittedByStudent.get(student.id);
+      if (!studentSessions || studentSessions.length === 0) return student;
+
+      const nextExamScores = { ...(student.examScores || {}) };
+      let studentModified = false;
+
+      for (const sess of studentSessions) {
+        const exam = examMap.get(sess.examId);
+        const examTitle = exam?.title || sess.examId;
+        const submittedAt = sess.submittedAt || sess.lastHeartbeat || new Date().toISOString();
+        const existingRecord = nextExamScores[sess.examId];
+
+        if (
+          !existingRecord ||
+          existingRecord.score !== sess.score ||
+          existingRecord.correctCount !== sess.correctCount ||
+          existingRecord.submittedAt !== submittedAt
+        ) {
+          nextExamScores[sess.examId] = {
+            examId: sess.examId,
+            examTitle,
+            score: sess.score!,
+            correctCount: sess.correctCount,
+            wrongCount: sess.wrongCount,
+            unansweredCount: sess.unansweredCount,
+            paperCode: sess.paperCode,
+            submittedAt,
+          };
+          studentModified = true;
+        }
+      }
+
+      // Tìm bài nộp mới nhất của học sinh
+      const sortedRecords = Object.values(nextExamScores).sort((a, b) =>
+        (b.submittedAt || '').localeCompare(a.submittedAt || '')
+      );
+      const latest = sortedRecords[0];
+
+      if (
+        latest &&
+        (student.latestScore !== latest.score ||
+          student.latestExamId !== latest.examId ||
+          student.latestExamTitle !== latest.examTitle)
+      ) {
+        studentModified = true;
+      }
+
+      if (!studentModified) return student;
+
+      studentsChanged = true;
+      return {
+        ...student,
+        examScores: nextExamScores,
+        ...(latest
+          ? {
+              latestScore: latest.score,
+              latestExamId: latest.examId,
+              latestExamTitle: latest.examTitle,
+              latestSubmittedAt: latest.submittedAt,
+            }
+          : {}),
+      };
+    });
+
+    if (studentsChanged) {
+      safeSetItem(KEYS.STUDENTS, updatedStudents);
+      if (triggerRepoSync) {
+        this.markLocalEditAndSync();
+      }
+    }
+
+    return studentsChanged;
+  }
+
   public getSessions(): Record<string, StudentExamSession> {
     return safeGetItem<Record<string, StudentExamSession>>(KEYS.SESSIONS, {});
   }
 
   public saveSessions(sessions: Record<string, StudentExamSession>): void {
     safeSetItem(KEYS.SESSIONS, sessions);
+    this.syncStudentScoresFromSessions(sessions, true);
   }
 
   public getSession(studentId: string, examId: string): StudentExamSession | null {
@@ -754,22 +863,16 @@ export class AppStorage {
 
   // --- ACTIONS ---
   /**
-   * Mở kỳ thi: Khởi tạo mã đề và phiên thi riêng cho tất cả học sinh thuộc lớp được chỉ định
+   * Mở kỳ thi: Khởi tạo mã đề và phiên thi riêng cho tất cả học sinh thuộc lớp được chỉ định.
+   * Cho phép nhiều kỳ thi diễn ra đồng thời (không tự động tạm dừng các kỳ thi đang mở khác).
    */
   public activateExam(examId: string): void {
     const exams = this.getExams();
     const exam = exams.find((e) => e.id === examId);
     if (!exam) throw new Error('Không tìm thấy đề thi');
 
-    // Đảm bảo chỉ có 1 kỳ thi đang mở tại một thời điểm trong phòng máy
-    exams.forEach((e) => {
-      if (e.id !== examId && e.status === 'dang_dien_ra') {
-        e.status = 'tam_dung';
-      }
-    });
-
     exam.status = 'dang_dien_ra';
-    exam.startTime = new Date().toISOString();
+    exam.startTime = exam.startTime || new Date().toISOString();
     this.saveExams(exams);
 
     const questions = this.getQuestions();

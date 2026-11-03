@@ -206,4 +206,49 @@ describe('examStorage operations', () => {
       globalThis.fetch = prevFetch;
     }
   });
+
+  it('activateExam allows multiple exams to run simultaneously and saveSession persists student score into class list', () => {
+    const storage = AppStorage.getInstance();
+    storage.resetToDefaults();
+
+    const exams = storage.getExams();
+    assert.ok(exams.length >= 2);
+    const exam1Id = exams[0].id;
+    const exam2Id = exams[1].id;
+
+    storage.activateExam(exam1Id);
+    storage.activateExam(exam2Id);
+
+    const runningAfterBoth = storage
+      .getExams()
+      .filter((e) => e.status === 'dang_dien_ra')
+      .map((e) => e.id);
+    assert.ok(runningAfterBoth.includes(exam1Id), 'First exam should remain running');
+    assert.ok(runningAfterBoth.includes(exam2Id), 'Second exam should also be running');
+
+    // Submit a student session and verify the score is saved into the student record in class list
+    const firstStudent = storage.getStudents()[0];
+    assert.ok(firstStudent);
+
+    storage.saveSession({
+      id: `sess_${firstStudent.id}_${exam1Id}`,
+      examId: exam1Id,
+      studentId: firstStudent.id,
+      paperCode: 'MD701',
+      status: 'da_nop_bai',
+      submittedAt: '2026-11-02T19:00:00.000Z',
+      timeRemainingSeconds: 0,
+      answers: {},
+      score: 9.5,
+      correctCount: 19,
+      wrongCount: 1,
+      unansweredCount: 0,
+      lastHeartbeat: '2026-11-02T19:00:00.000Z',
+    });
+
+    const updatedStudent = storage.getStudents().find((s) => s.id === firstStudent.id);
+    assert.strictEqual(updatedStudent?.latestScore, 9.5);
+    assert.strictEqual(updatedStudent?.latestExamId, exam1Id);
+    assert.strictEqual(updatedStudent?.examScores?.[exam1Id]?.score, 9.5);
+  });
 });

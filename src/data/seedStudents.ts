@@ -1,6 +1,6 @@
 import { Student } from '../types';
 
-// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T00:58:35.949Z
+// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T03:13:11.061Z
 export const SEED_CLASSES: string[] = [
   "7A10",
   "7A4",

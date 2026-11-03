@@ -221,55 +221,6 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
         </div>
       </div>
 
-      {/* Cấu hình địa chỉ mạng LAN */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
-        <h2 className="text-base font-bold text-slate-800 flex items-center space-x-2 border-b pb-3">
-          <Wifi className="w-4 h-4 text-blue-600" />
-          <span>Cấu hình địa chỉ truy cập phòng máy LAN</span>
-        </h2>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">
-              Địa chỉ IP máy chủ giáo viên (IPv4):
-            </label>
-            <input
-              type="text"
-              value={serverIp}
-              onChange={(e) => setServerIp(e.target.value)}
-              placeholder="Ví dụ: 192.168.1.10"
-              className="w-full p-2.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-[11px] text-slate-400 mt-1">
-              Mở <code>cmd</code> gõ lệnh <code>ipconfig</code> trên máy giáo viên để xem địa chỉ IP
-            </p>
-          </div>
-
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">
-              Cổng dịch vụ (Port):
-            </label>
-            <input
-              type="number"
-              value={serverPort}
-              onChange={(e) => setServerPort(Number(e.target.value))}
-              placeholder="3000"
-              className="w-full p-2.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-[11px] text-slate-400 mt-1">
-              Mặc định cổng 3000 cho máy chủ nội bộ Node.js
-            </p>
-          </div>
-        </div>
-
-        <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg text-xs text-blue-900">
-          Địa chỉ đầy đủ học sinh truy cập:{' '}
-          <code className="font-mono font-bold bg-white px-2 py-0.5 rounded border border-blue-300 text-blue-700">
-            http://{serverIp}:{serverPort}
-          </code>
-        </div>
-      </div>
-
       {/* Cấu hình trường học & môn học */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
         <h2 className="text-base font-bold text-slate-800 flex items-center space-x-2 border-b pb-3">

@@ -95,7 +95,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
                 Thầy giáo Ngô Văn Chinh - Trường TH&amp;THCS Thụy Lâm
               </p>
               <p className="text-xs text-slate-600 font-medium">
-                Trường TH &amp; THCS Thụy Lâm - Thư Lâm
+                Trường TH &amp; THCS Thụy Lâm - Xã Thư Lâm - TP Hà Nội
               </p>
             </div>
           </div>
@@ -154,8 +154,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
                 1. Hướng dẫn sử dụng cho Giáo viên
               </h2>
               <p className="text-xs text-slate-500">
-                Tài khoản đăng nhập: <code className="font-bold text-blue-700">Admin</code> • Mật khẩu:{' '}
-                <code className="font-bold text-blue-700">admin123</code>
+                Đăng nhập bằng tài khoản quản trị dành riêng cho Giáo viên bộ môn
               </p>
             </div>
           </div>
@@ -190,7 +189,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
                 </h3>
                 <p>
                   Vào mục <strong>Quản lý học sinh &amp; Excel</strong> để tạo lớp học, nhập danh sách học sinh
-                  từ file Excel. Hệ thống tự động tạo <strong>Mã đăng nhập</strong> không dấu (ví dụ:{' '}
+                  từ file Excel. Hệ thống tự động tạo <strong>Mã đăng nhập</strong> không dấu theo từng lớp (ví dụ:{' '}
                   <code>nvan</code>) và cấp mật khẩu mặc định <code>123456</code>.
                 </p>
               </div>
@@ -224,12 +223,12 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
               <div className="space-y-1">
                 <h3 className="font-bold text-slate-800 flex items-center space-x-1.5">
                   <PlayCircle className="w-4 h-4 text-emerald-600" />
-                  <span>Mở kỳ thi, Giám sát phòng máy &amp; Xuất bảng điểm</span>
+                  <span>Mở kỳ thi trực tuyến, Giám sát &amp; Xuất bảng điểm</span>
                 </h3>
                 <p>
                   Nhấn <strong>Mở kỳ thi</strong> trên đề thi cần tổ chức. Theo dõi tiến độ làm bài trực tiếp
-                  của 60 máy trạm tại mục <strong>Giám sát phòng thi</strong> và xuất kết quả ra file Excel tại
-                  mục <strong>Bảng điểm &amp; Xuất Excel</strong>.
+                  tại mục <strong>Giám sát phòng thi</strong> và xuất kết quả ra file Excel tại
+                  mục <strong>Bảng điểm &amp; Xuất Excel</strong>. Mọi chỉnh sửa dữ liệu được tự động cập nhật vào thư mục Data.
                 </p>
               </div>
             </div>
@@ -247,7 +246,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
                 2. Hướng dẫn làm bài cho Học sinh
               </h2>
               <p className="text-xs text-slate-500">
-                Đăng nhập bằng <strong>Mã đăng nhập</strong> do Giáo viên cấp • Mật khẩu mặc định:{' '}
+                Chọn <strong>Lớp học</strong> + <strong>Mã đăng nhập</strong> • Mật khẩu mặc định:{' '}
                 <code className="font-bold text-emerald-700">123456</code>
               </p>
             </div>
@@ -259,11 +258,9 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
                 1
               </div>
               <div className="space-y-1">
-                <h3 className="font-bold text-slate-800">Đăng nhập ở chế độ Học sinh</h3>
+                <h3 className="font-bold text-slate-800">Chọn lớp học &amp; Nhập mã đăng nhập</h3>
                 <p>
-                  Khi mở ứng dụng trên máy trạm, chọn chế độ <strong>Học sinh</strong> tại cửa sổ đăng nhập.
-                  Màn hình sẽ hiển thị ngay thông tin <strong>Kỳ thi mà Giáo viên đang mở</strong>. Nhập mã
-                  đăng nhập của em và mật khẩu mặc định <code>123456</code>.
+                  Chọn chế độ <strong>Học sinh</strong> tại cửa sổ đăng nhập, chọn đúng <strong>Lớp học</strong> của em bên cạnh ô <strong>Mã đăng nhập</strong> (giúp phân biệt chính xác khi nhiều lớp cùng thi chung một đề), rồi nhập mật khẩu mặc định <code>123456</code>.
                 </p>
               </div>
             </div>
@@ -308,11 +305,10 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
               <div className="space-y-1">
                 <h3 className="font-bold text-slate-800 flex items-center space-x-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Tự động lưu bài &amp; Nộp bài thi</span>
+                  <span>Tự động ghi lại trạng thái khi mất mạng hoặc thoát ra</span>
                 </h3>
                 <p>
-                  Mọi đáp án em chọn đều được tự động lưu ngay lập tức. Sau khi kiểm tra kỹ tất cả các câu trên
-                  bảng danh sách câu hỏi, nhấn nút <strong>Nộp bài</strong> để hoàn thành bài kiểm tra.
+                  Trong lúc đang thi trực tuyến, nếu bị mất mạng hoặc thoát ra ngoài, hệ thống tự động ghi lại <strong>câu hỏi đang làm, thời gian còn lại và toàn bộ đáp án đã chọn</strong>. Khi đăng nhập trở lại, em sẽ tiếp tục làm bài ngay tại đúng trạng thái lúc thoát ra.
                 </p>
               </div>
             </div>

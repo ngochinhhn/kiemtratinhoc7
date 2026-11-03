@@ -23,11 +23,11 @@ interface NavbarProps {
   setCurrentRole: (role: Role) => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  serverIp: string;
-  serverPort: number;
+  serverIp?: string;
+  serverPort?: number;
   schoolName: string;
   loggedInStudent?: Student | null;
-  onOpenNetSupportGuide: () => void;
+  onOpenNetSupportGuide?: () => void;
   onOpenHelpModal: () => void;
   onLogout: () => void | Promise<void>;
   onSyncData?: () => void | Promise<void>;
@@ -44,7 +44,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   serverPort,
   schoolName,
   loggedInStudent,
-  onOpenNetSupportGuide,
   onOpenHelpModal,
   onLogout,
   onSyncData,
@@ -54,7 +53,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   return (
     <header className="bg-blue-800 text-white shadow-md sticky top-0 z-40 border-b border-blue-900">
-      {/* Top bar: Tên hệ thống, trường học, IP LAN, Trợ giúp và Đăng xuất */}
+      {/* Top bar: Tên hệ thống, trường học, Trợ giúp và Đăng xuất */}
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-center justify-between min-h-14 py-2 gap-2">
           {/* Logo & Tên ứng dụng */}
@@ -72,32 +71,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-blue-200 font-medium truncate">
-                {schoolName} • LAN
+                {schoolName}
               </p>
             </div>
           </div>
-
-          {/* Địa chỉ truy cập LAN phòng máy & Nút mở NetSupport (hiển thị trên màn hình lớn cho Giáo viên) */}
-          {currentRole === 'giaovien' && (
-            <div className="hidden xl:flex items-center space-x-2">
-              <div className="bg-blue-900/80 border border-blue-700/60 rounded-md px-2.5 py-1 flex items-center space-x-1.5 text-xs">
-                <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
-                <span className="text-blue-200 whitespace-nowrap">Địa chỉ thi LAN:</span>
-                <code className="bg-blue-950 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-bold select-all whitespace-nowrap">
-                  http://{serverIp}:{serverPort}
-                </code>
-              </div>
-
-              <button
-                onClick={onOpenNetSupportGuide}
-                className="bg-blue-700 hover:bg-blue-600 text-white text-xs font-medium px-2.5 py-1.5 rounded-md flex items-center space-x-1.5 transition-colors border border-blue-500 shadow-sm cursor-pointer whitespace-nowrap"
-                title="Hướng dẫn triển khai qua phần mềm NetSupport School"
-              >
-                <Monitor className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                <span>NetSupport School</span>
-              </button>
-            </div>
-          )}
 
           {/* Thông tin phiên đăng nhập, trạng thái tự động lưu Data, nút Trợ giúp & Đăng xuất */}
           <div className="flex items-center space-x-1.5 sm:space-x-2">

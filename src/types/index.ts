@@ -67,6 +67,17 @@ export interface Question {
   updatedAt: string;
 }
 
+export interface StudentExamScoreRecord {
+  examId: string;
+  examTitle: string;
+  score: number;
+  correctCount?: number;
+  wrongCount?: number;
+  unansweredCount?: number;
+  paperCode?: string;
+  submittedAt: string;
+}
+
 export interface Student {
   id: string;
   studentIdCode?: string; // Mã học sinh của trường e.g. "HS7001"
@@ -76,6 +87,11 @@ export interface Student {
   passwordHash: string; // Mã băm mật khẩu (mặc định: "123456")
   className: string; // Lớp e.g. "7A", "7B"
   workstationNumber?: number; // Số máy tính trong phòng máy (1 đến 60)
+  latestScore?: number; // Điểm kỳ thi gần nhất đã nộp
+  latestExamId?: string; // Mã kỳ thi gần nhất đã nộp
+  latestExamTitle?: string; // Tên kỳ thi gần nhất đã nộp
+  latestSubmittedAt?: string; // Thời điểm nộp bài gần nhất
+  examScores?: Record<string, StudentExamScoreRecord>; // Lưu điểm theo từng kỳ thi (examId -> StudentExamScoreRecord)
   createdAt: string;
 }
 
@@ -138,6 +154,9 @@ export interface StudentExamSession {
   startedAt?: string;
   submittedAt?: string;
   timeRemainingSeconds: number;
+  currentQuestionIndex?: number; // Vị trí câu hỏi đang làm lúc thoát ra / mất mạng (0-based)
+  lastDisconnectedAt?: string; // Thời điểm bị mất mạng hoặc thoát ra giữa chừng
+  disconnectReason?: 'mat_mang' | 'thoat_ra';
   answers: Record<string, StudentAnswer>; // questionId -> StudentAnswer
   score?: number;
   correctCount?: number;

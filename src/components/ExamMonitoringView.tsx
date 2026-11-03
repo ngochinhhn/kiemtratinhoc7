@@ -106,6 +106,7 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
     (i) => i.session.status === 'da_dang_nhap' || i.session.status === 'dang_lam_bai'
   ).length;
   const inProgressCount = studentMonitorList.filter((i) => i.session.status === 'dang_lam_bai').length;
+  const disconnectedCount = studentMonitorList.filter((i) => i.session.status === 'mat_ket_noi').length;
   const submittedCount = studentMonitorList.filter((i) => i.session.status === 'da_nop_bai').length;
   const offlineCount = studentMonitorList.filter((i) => i.session.status === 'chua_dang_nhap').length;
 
@@ -135,7 +136,7 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
     showToast('Đã thu bài và chấm điểm xong cho toàn bộ phòng thi!');
   };
 
-  // Mô phỏng kiểm thử tải 60 học sinh đồng loạt (Stress Test LAN Simulator)
+  // Mô phỏng kiểm thử tải 60 học sinh đồng loạt
   const handleSimulate60Students = () => {
     setIsSimulating(true);
     const updated = { ...sessions };
@@ -182,7 +183,6 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
         startedAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
         submittedAt: new Date().toISOString(),
         lastHeartbeat: new Date().toISOString(),
-        workstationIp: `192.168.1.${100 + (item.student.workstationNumber || idx + 1)}`,
       };
     });
 
@@ -266,8 +266,8 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
           <p className="text-xl font-black text-blue-800 mt-0.5">{inProgressCount}</p>
         </div>
         <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 shadow-xs">
-          <p className="text-[11px] font-semibold text-amber-700 uppercase">Đã đăng nhập</p>
-          <p className="text-xl font-black text-amber-800 mt-0.5">{loggedInCount - inProgressCount}</p>
+          <p className="text-[11px] font-semibold text-amber-700 uppercase">Tạm thoát / Mất mạng</p>
+          <p className="text-xl font-black text-amber-800 mt-0.5">{disconnectedCount}</p>
         </div>
         <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-xs col-span-2 sm:col-span-1">
           <p className="text-[11px] font-semibold text-slate-500 uppercase">Chưa vào thi</p>
@@ -297,6 +297,7 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
           >
             <option value="all">Tất cả trạng thái ({studentMonitorList.length})</option>
             <option value="dang_lam_bai">Đang làm bài ({inProgressCount})</option>
+            <option value="mat_ket_noi">Tạm thoát / Mất mạng ({disconnectedCount})</option>
             <option value="da_nop_bai">Đã nộp bài ({submittedCount})</option>
             <option value="da_dang_nhap">Đã đăng nhập ({loggedInCount})</option>
             <option value="chua_dang_nhap">Chưa vào ({offlineCount})</option>
@@ -328,7 +329,7 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
       {viewMode === 'grid' ? (
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center justify-between text-xs text-slate-500 pb-2 border-b">
-            <span className="font-bold text-slate-700">Sơ đồ vị trí các máy trong phòng thực hành:</span>
+            <span className="font-bold text-slate-700">Sơ đồ vị trí các máy trong phòng thi:</span>
             <div className="flex flex-wrap items-center gap-3">
               <span className="flex items-center space-x-1">
                 <span className="w-3 h-3 rounded bg-emerald-500" />
@@ -340,7 +341,7 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
               </span>
               <span className="flex items-center space-x-1">
                 <span className="w-3 h-3 rounded bg-amber-400" />
-                <span>Đã vào</span>
+                <span>Tạm thoát / Đã lưu</span>
               </span>
               <span className="flex items-center space-x-1">
                 <span className="w-3 h-3 rounded bg-slate-200" />
@@ -353,20 +354,17 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
             {filteredList.map((item) => {
               const isSubmitted = item.session.status === 'da_nop_bai';
               const isInProgress = item.session.status === 'dang_lam_bai';
+              const isDisconnected = item.session.status === 'mat_ket_noi';
               const isLoggedIn = item.session.status === 'da_dang_nhap';
 
               let cardBg = 'bg-slate-50 border-slate-200 text-slate-600';
-              let badgeColor = 'bg-slate-200 text-slate-700';
 
               if (isSubmitted) {
                 cardBg = 'bg-emerald-50 border-emerald-300 text-emerald-950 ring-1 ring-emerald-400/30';
-                badgeColor = 'bg-emerald-600 text-white font-bold';
               } else if (isInProgress) {
                 cardBg = 'bg-blue-50 border-blue-300 text-blue-950 ring-1 ring-blue-400/30';
-                badgeColor = 'bg-blue-600 text-white font-bold';
-              } else if (isLoggedIn) {
+              } else if (isDisconnected || isLoggedIn) {
                 cardBg = 'bg-amber-50 border-amber-300 text-amber-950';
-                badgeColor = 'bg-amber-500 text-white font-bold';
               }
 
               return (
@@ -401,13 +399,17 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
                       <span className="text-blue-700 font-bold">
                         {item.answeredCount}/{item.totalQuestions} câu
                       </span>
+                    ) : isDisconnected ? (
+                      <span className="text-amber-800 font-bold">
+                        Câu {(item.session.currentQuestionIndex ?? 0) + 1} (Đã lưu)
+                      </span>
                     ) : isLoggedIn ? (
                       <span className="text-amber-700 font-medium">Đang chờ</span>
                     ) : (
                       <span className="text-slate-400">Chưa vào</span>
                     )}
 
-                    <span className={`w-2 h-2 rounded-full ${isSubmitted ? 'bg-emerald-500' : isInProgress ? 'bg-blue-500 animate-ping' : isLoggedIn ? 'bg-amber-400' : 'bg-slate-300'}`} />
+                    <span className={`w-2 h-2 rounded-full ${isSubmitted ? 'bg-emerald-500' : isInProgress ? 'bg-blue-500 animate-ping' : isDisconnected || isLoggedIn ? 'bg-amber-400' : 'bg-slate-300'}`} />
                   </div>
                 </div>
               );
@@ -460,6 +462,10 @@ export const ExamMonitoringView: React.FC<ExamMonitoringViewProps> = ({
                       ) : item.session.status === 'dang_lam_bai' ? (
                         <span className="bg-blue-100 text-blue-800 text-[11px] font-bold px-2 py-0.5 rounded-full">
                           Đang làm bài
+                        </span>
+                      ) : item.session.status === 'mat_ket_noi' ? (
+                        <span className="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded-full">
+                          Tạm thoát (Câu {(item.session.currentQuestionIndex ?? 0) + 1})
                         </span>
                       ) : item.session.status === 'da_dang_nhap' ? (
                         <span className="bg-amber-100 text-amber-800 text-[11px] font-bold px-2 py-0.5 rounded-full">

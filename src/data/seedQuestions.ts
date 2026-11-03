@@ -1,6 +1,6 @@
 import { Question } from '../types';
 
-// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T00:58:35.949Z
+// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T03:13:11.061Z
 export const SEED_QUESTIONS: Question[] = [
   {
     "id": "manual_1793518905656",
@@ -1373,7 +1373,7 @@ export const SEED_QUESTIONS: Question[] = [
   {
     "id": "pdf_import_1793437071765_32",
     "themeId": "chu_de_2",
-    "themeName": "Chủ đề 2: Tổ chức lưu trữ, tìm kiếm và trao đổi thông tin",
+    "themeName": "Chủ đề 2: Tổ ch���c lưu trữ, tìm kiếm và trao đổi thông tin",
     "lessonId": "bai_4",
     "lessonName": "Bài 4: Mạng xã hội và một số kênh trao đổi thông tin trên Internet",
     "content": "Câu 4.2. Chọn phương án ghép Sai:\nƯu điểm của mạng xã hội là:",
@@ -1884,7 +1884,7 @@ export const SEED_QUESTIONS: Question[] = [
       {
         "id": "opt_1793437071766_43_b_1",
         "label": "B",
-        "content": "Không nháy chuột vào các thông tin quảng cáo gây tò mò, gi��t gân, dụ dỗ kiếm tiền."
+        "content": "Không nháy chuột vào các thông tin quảng cáo gây tò mò, giật gân, dụ dỗ kiếm tiền."
       },
       {
         "id": "opt_1793437071766_43_c_2",
@@ -1902,7 +1902,7 @@ export const SEED_QUESTIONS: Question[] = [
     "reviewStatus": "da_kiem_duyet",
     "sourcePage": 14,
     "sourceBook": "Cau hoi chu de 1-3_new.pdf",
-    "explanation": "Khi truy cập các trang web phù hợp với lứa tuổi học sinh em có thể tránh được các thông tin xấu. Các thông tin quảng cáo gây tò mò, giật gân thường dẫn đến các trang web xấu hoặc lừa đảo, lấy cắp thông tin. Xác định rõ mục tiêu giúp không bị dẫn dắt, sa đà, lãng phí thời gian và dễ gặp thông tin xấu.",
+    "explanation": "Khi truy cập các trang web phù hợp với lứa tuổi học sinh em có thể tránh được c��c thông tin xấu. Các thông tin quảng cáo gây tò mò, giật gân thường dẫn đến các trang web xấu hoặc lừa đảo, lấy cắp thông tin. Xác định rõ mục tiêu giúp không bị dẫn dắt, sa đà, lãng phí thời gian và dễ gặp thông tin xấu.",
     "createdAt": "2026-10-31T08:57:51.766Z",
     "updatedAt": "2026-10-31T08:57:51.766Z"
   },
