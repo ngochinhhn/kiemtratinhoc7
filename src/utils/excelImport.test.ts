@@ -1,26 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import ExcelJS from 'exceljs';
-import JSZip from 'jszip';
 import {
+  buildXlsxBuffer,
+  createZipBuffer,
+  readZipTextFiles,
   parseStudentsFromExcelBuffer,
   parseClassesFromExcelBuffer,
   normalizeClassName,
 } from './excelExport';
 
 test('parseStudentsFromExcelBuffer parses valid student rows and auto detects columns', async () => {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('DanhSach');
+  const buffer = await buildXlsxBuffer([
+    {
+      name: 'DanhSach',
+      headers: ['STT', 'Mã học sinh', 'Họ và tên học sinh', 'Lớp'],
+      rows: [
+        [1, 'HS7C01', 'Nguyễn Văn Minh', '7C'],
+        [2, 'HS7C02', 'Trần Thu Trang', '7C'],
+        [3, '', 'Lê Quốc Bảo', '7C'],
+      ],
+    },
+  ]);
 
-  // Add header row
-  worksheet.addRow(['STT', 'Mã học sinh', 'Họ và tên học sinh', 'Lớp']);
-  // Add data rows
-  worksheet.addRow([1, 'HS7C01', 'Nguyễn Văn Minh', '7C']);
-  worksheet.addRow([2, 'HS7C02', 'Trần Thu Trang', '7C']);
-  worksheet.addRow([3, '', 'Lê Quốc Bảo', '7C']);
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  const result = await parseStudentsFromExcelBuffer(buffer as ArrayBuffer, '7C');
+  const result = await parseStudentsFromExcelBuffer(buffer, '7C');
 
   assert.equal(result.students.length, 3);
   assert.equal(result.students[0].fullName, 'Nguyễn Văn Minh');
@@ -35,15 +37,18 @@ test('parseStudentsFromExcelBuffer parses valid student rows and auto detects co
 });
 
 test('parseStudentsFromExcelBuffer correctly enforces overrideClass when uploading for a specific class', async () => {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('HocSinhLop7A1');
+  const buffer = await buildXlsxBuffer([
+    {
+      name: 'HocSinhLop7A1',
+      headers: ['STT', 'Họ và tên', 'Ghi chú'],
+      rows: [
+        [1, 'Phạm Gia Huy', ''],
+        [2, 'Vũ Hải Yến', ''],
+      ],
+    },
+  ]);
 
-  worksheet.addRow(['STT', 'Họ và tên', 'Ghi chú']);
-  worksheet.addRow([1, 'Phạm Gia Huy', '']);
-  worksheet.addRow([2, 'Vũ Hải Yến', '']);
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  const result = await parseStudentsFromExcelBuffer(buffer as ArrayBuffer, '7A', '7A1');
+  const result = await parseStudentsFromExcelBuffer(buffer, '7A', '7A1');
 
   assert.equal(result.students.length, 2);
   assert.equal(result.students[0].className, '7A1');
@@ -51,21 +56,22 @@ test('parseStudentsFromExcelBuffer correctly enforces overrideClass when uploadi
   assert.equal(result.detectedClassNames.includes('7A1'), true);
 });
 
-test('parseStudentsFromExcelBuffer succeeds when docProps/app.xml has namespaced Properties tag that crashes raw ExcelJS with company error', async () => {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('DanhSach');
-  worksheet.addRow(['STT', 'Mã HS', 'Họ và tên', 'Lớp']);
-  worksheet.addRow([1, 'HS7A1_01', 'Đặng Minh Khôi', '7A1']);
-  worksheet.addRow([2, 'HS7A1_02', 'Ngô Bảo Châu', '7A1']);
+test('parseStudentsFromExcelBuffer succeeds when docProps/app.xml has namespaced Properties tag', async () => {
+  const rawBuffer = await buildXlsxBuffer([
+    {
+      name: 'DanhSach',
+      headers: ['STT', 'Mã HS', 'Họ và tên', 'Lớp'],
+      rows: [
+        [1, 'HS7A1_01', 'Đặng Minh Khôi', '7A1'],
+        [2, 'HS7A1_02', 'Ngô Bảo Châu', '7A1'],
+      ],
+    },
+  ]);
 
-  const rawBuffer = await workbook.xlsx.writeBuffer();
-  const zip = await JSZip.loadAsync(rawBuffer);
-  // Inject namespaced docProps/app.xml that causes raw ExcelJS AppXform to return undefined (reading 'company')
-  zip.file(
-    'docProps/app.xml',
-    '<?xml version="1.0" encoding="UTF-8"?><ep:Properties xmlns:ep="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><ep:Company>VNEDU</ep:Company></ep:Properties>'
-  );
-  const brokenAppXmlBuffer = await zip.generateAsync({ type: 'arraybuffer' });
+  const existingFiles = await readZipTextFiles(rawBuffer);
+  existingFiles['docProps/app.xml'] =
+    '<?xml version="1.0" encoding="UTF-8"?><ep:Properties xmlns:ep="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><ep:Company>VNEDU</ep:Company></ep:Properties>';
+  const brokenAppXmlBuffer = await createZipBuffer(existingFiles);
 
   const result = await parseStudentsFromExcelBuffer(brokenAppXmlBuffer, '7A1');
   assert.equal(result.students.length, 2);
@@ -94,17 +100,20 @@ test('parseStudentsFromExcelBuffer parses HTML table .xls files exported from sc
 });
 
 test('parseClassesFromExcelBuffer extracts unique class names from Excel file', async () => {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('DanhSachLop');
+  const buffer = await buildXlsxBuffer([
+    {
+      name: 'DanhSachLop',
+      headers: ['STT', 'Tên lớp', 'Khối', 'Ghi chú'],
+      rows: [
+        [1, '7A1', '7', 'Phòng 101'],
+        [2, '7A2', '7', 'Phòng 102'],
+        [3, 'Lớp 7A3', '7', 'Phòng 103'],
+        [4, '7A1', '7', 'Trùng'],
+      ],
+    },
+  ]);
 
-  worksheet.addRow(['STT', 'Tên lớp', 'Khối', 'Ghi chú']);
-  worksheet.addRow([1, '7A1', '7', 'Phòng 101']);
-  worksheet.addRow([2, '7A2', '7', 'Phòng 102']);
-  worksheet.addRow([3, 'Lớp 7A3', '7', 'Phòng 103']);
-  worksheet.addRow([4, '7A1', '7', 'Trùng']);
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  const result = await parseClassesFromExcelBuffer(buffer as ArrayBuffer);
+  const result = await parseClassesFromExcelBuffer(buffer);
 
   assert.equal(result.classes.length, 3);
   assert.deepEqual(result.classes, ['7A1', '7A2', '7A3']);
@@ -116,4 +125,3 @@ test('normalizeClassName cleans up class names', () => {
   assert.equal(normalizeClassName('Class 7C'), '7C');
   assert.equal(normalizeClassName('  7d  '), '7D');
 });
-

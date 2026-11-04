@@ -19,10 +19,28 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "firebase/app": [
+        "./src/vendor/firebase/app.js"
+      ],
+      "firebase/auth": [
+        "./src/vendor/firebase/auth.js"
+      ],
+      "firebase/firestore": [
+        "./src/vendor/firebase/firestore.js"
+      ],
+      "pdfjs-dist": [
+        "./src/vendor/pdf.min.mjs"
+      ],
+      "pdfjs-dist/legacy/build/pdf.mjs": [
+        "./src/vendor/pdf.min.mjs"
+      ],
+      "canvas-confetti": [
+        "./src/vendor/confetti.mjs"
       ]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist"]
+  "exclude": ["dist", "src/vendor"]
 }

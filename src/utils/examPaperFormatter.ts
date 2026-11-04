@@ -1,4 +1,4 @@
-import JSZip from 'jszip';
+import { createZipBuffer } from './excelExport';
 import { Exam, ExamHeaderConfig, ExamType, Question, QuestionType, StudentExamPaper } from '../types';
 import { getDisplayQuestionsForStudent } from './examShuffler';
 import { getQuestionType } from './grading';
@@ -2772,15 +2772,16 @@ export async function buildExamPaperDocxBytes(opts: A4PrintRenderOptions): Promi
   <Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
 </Relationships>`;
 
-  const zip = new JSZip();
-  zip.file('[Content_Types].xml', contentTypesXml);
-  zip.file('_rels/.rels', rootRelsXml);
-  zip.file('word/document.xml', documentXml);
-  zip.file('word/styles.xml', stylesXml);
-  zip.file('word/footer1.xml', footer1Xml);
-  zip.file('word/_rels/document.xml.rels', documentRelsXml);
+  const zipBuffer = await createZipBuffer({
+    '[Content_Types].xml': contentTypesXml,
+    '_rels/.rels': rootRelsXml,
+    'word/document.xml': documentXml,
+    'word/styles.xml': stylesXml,
+    'word/footer1.xml': footer1Xml,
+    'word/_rels/document.xml.rels': documentRelsXml,
+  });
 
-  return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  return new Uint8Array(zipBuffer);
 }
 
 /**

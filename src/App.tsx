@@ -21,6 +21,13 @@ import { StudentExamView } from './components/StudentExamView';
 import { LoginView } from './components/LoginView';
 import { HelpView } from './components/HelpView';
 import { getActiveRunningExam, getActiveRunningExams } from './utils/auth';
+import {
+  signInTeacherWithGoogle,
+  signOutFirebase,
+  subscribeFirebaseAuth,
+  syncAppDataToFirestore,
+  syncSessionToFirestore,
+} from './utils/firebaseSync';
 
 const ACTIVE_STUDENT_STORAGE_KEY = 'smarttest7_active_student_v1';
 const ACTIVE_STUDENT_EXAM_ID_KEY = 'smarttest7_active_student_exam_id_v1';
@@ -90,13 +97,30 @@ export default function App() {
   const [lastRepoSyncAt, setLastRepoSyncAt] = useState<string | null>(() =>
     appStorage.getLastRepoSyncAt()
   );
+  const [firebaseUserEmail, setFirebaseUserEmail] = useState<string | null>(null);
+  const [lastFirestoreSyncAt, setLastFirestoreSyncAt] = useState<string | null>(null);
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // Đề thi đang chọn để giám sát / xem kết quả
   const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
 
-  // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/
+  // Đồng bộ lên Cloud Firestore nếu Giáo viên đã đăng nhập Google Firebase Auth
+  const syncTeacherDataToFirestore = async () => {
+    const res = await syncAppDataToFirestore({
+      questions: appStorage.getQuestions(),
+      students: appStorage.getStudents(),
+      exams: appStorage.getExams(),
+      sessions: appStorage.getSessions(),
+      config: appStorage.getConfig(),
+    });
+    if (res.ok && res.syncedAt) {
+      setLastFirestoreSyncAt(res.syncedAt);
+    }
+    return res;
+  };
+
+  // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/ (và Cloud Firestore nếu đã kết nối)
   const syncTeacherDataToRepo = async () => {
     setIsSyncingData(true);
     try {
@@ -105,6 +129,9 @@ export default function App() {
         setLastRepoSyncAt(res.updatedAt);
       } else {
         setLastRepoSyncAt(appStorage.getLastRepoSyncAt());
+      }
+      if (firebaseUserEmail) {
+        void syncTeacherDataToFirestore();
       }
       return res;
     } finally {
@@ -135,6 +162,10 @@ export default function App() {
   useEffect(() => {
     reloadData();
     void syncTeacherDataToRepo();
+    const unsub = subscribeFirebaseAuth((user) => {
+      setFirebaseUserEmail(user?.email || null);
+    });
+    return () => unsub();
   }, []);
 
   // Đảm bảo tự động lưu vào src/data/ trước khi Giáo viên đóng tab hoặc tải lại trang
@@ -161,6 +192,14 @@ export default function App() {
     setActiveTab('tongquan');
     setIsAuthenticated(true);
     void syncTeacherDataToRepo();
+  };
+
+  // Đăng nhập Giáo viên qua Google Firebase Auth
+  const handleLoginTeacherGoogle = async () => {
+    const user = await signInTeacherWithGoogle();
+    setFirebaseUserEmail(user.email || null);
+    handleLoginTeacher();
+    void syncTeacherDataToFirestore();
   };
 
   // Xử lý đăng nhập Học sinh (kèm kỳ thi mà học sinh chọn tham dự)
@@ -194,6 +233,10 @@ export default function App() {
       setIsLoggingOut(true);
       try {
         await syncTeacherDataToRepo();
+        if (firebaseUserEmail) {
+          await signOutFirebase();
+          setFirebaseUserEmail(null);
+        }
       } finally {
         setIsLoggingOut(false);
       }
@@ -324,6 +367,9 @@ export default function App() {
     if (session.status === 'da_nop_bai' && session.score !== undefined) {
       setStudents(appStorage.getStudents());
     }
+    if (firebaseUserEmail) {
+      void syncSessionToFirestore(session);
+    }
   };
 
   // Cập nhật cấu hình hệ thống
@@ -411,6 +457,7 @@ export default function App() {
           activeExams={openStudentExams}
           schoolName={config.schoolName}
           onLoginTeacher={handleLoginTeacher}
+          onLoginTeacherGoogle={handleLoginTeacherGoogle}
           onLoginStudent={handleLoginStudent}
           onOpenHelp={() => setIsHelpModalOpen(true)}
         />
@@ -528,6 +575,14 @@ export default function App() {
                     examsCount: exams.length,
                   }}
                   lastRepoSyncAt={lastRepoSyncAt}
+                  firebaseUserEmail={firebaseUserEmail}
+                  lastFirestoreSyncAt={lastFirestoreSyncAt}
+                  onConnectFirebaseGoogle={async () => {
+                    const user = await signInTeacherWithGoogle();
+                    setFirebaseUserEmail(user.email || null);
+                    await syncTeacherDataToFirestore();
+                  }}
+                  onSyncFirestoreCloud={syncTeacherDataToFirestore}
                   onSaveConfig={handleSaveConfig}
                   onSyncToRepo={syncTeacherDataToRepo}
                   onExportBackup={handleExportBackup}

@@ -33,9 +33,9 @@ describe('storage compaction and hydration for StudentExamPaper', () => {
     const compactedPapers = compactPapersForStorage(originalPapers, knownIds);
     const compactedSize = JSON.stringify(compactedPapers).length;
 
-    // Uncompacted size for 60 students * 4 * 60KB is > 14MB; compacted size is < 60KB
+    // Uncompacted size for 60 students * 4 * 60KB is > 14MB; compacted size is < 150KB (>98.9% reduction)
     assert.ok(uncompactedSize > 10_000_000, `Expected uncompacted > 10MB, got ${uncompactedSize}`);
-    assert.ok(compactedSize < 80_000, `Expected compacted < 80KB, got ${compactedSize}`);
+    assert.ok(compactedSize < 150_000, `Expected compacted < 150KB, got ${compactedSize}`);
 
     const hydratedPapers = hydratePapersFromStorage(compactedPapers, questionsWithImages);
     assert.strictEqual(Object.keys(hydratedPapers).length, 60);

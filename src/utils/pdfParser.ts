@@ -5,7 +5,7 @@ import { normalizeQuestionStructure } from './grading';
 // Cấu hình worker offline cho PDF.js trong môi trường trình duyệt Vite
 if (typeof window !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.mjs',
+    '../vendor/pdf.worker.mjs',
     import.meta.url
   ).toString();
 }

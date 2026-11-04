@@ -28,6 +28,7 @@ interface LoginViewProps {
   activeExams?: Exam[];
   schoolName: string;
   onLoginTeacher: () => void;
+  onLoginTeacherGoogle?: () => Promise<void>;
   onLoginStudent: (student: Student, selectedExamId?: string) => void;
   onOpenHelp: () => void;
 }
@@ -37,6 +38,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   activeExam,
   activeExams = [],
   onLoginTeacher,
+  onLoginTeacherGoogle,
   onLoginStudent,
   onOpenHelp,
 }) => {
@@ -284,6 +286,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 <span>Đăng nhập Giáo viên</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
+
+              {onLoginTeacherGoogle && (
+                <button
+                  type="button"
+                  data-testid="btn-google-teacher-login"
+                  onClick={async () => {
+                    setTeacherError('');
+                    try {
+                      await onLoginTeacherGoogle();
+                    } catch (_err) {
+                      setTeacherError(
+                        'Không thể đăng nhập bằng Google hoặc cửa sổ xác thực đã đóng.'
+                      );
+                    }
+                  }}
+                  className="w-full bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold py-2.5 px-4 rounded-xl shadow-2xs transition-all text-xs flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <ShieldCheck className="w-4 h-4 text-blue-600" />
+                  <span>Đăng nhập Giáo viên bằng Google (Đồng bộ Cloud Firebase)</span>
+                </button>
+              )}
             </form>
           ) : !currentSelectedExam ? (
             /* THÔNG BÁO KHI KHÔNG CÓ KỲ THI NÀO ĐANG MỞ */

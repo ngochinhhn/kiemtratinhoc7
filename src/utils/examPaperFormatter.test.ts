@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import JSZip from 'jszip';
+import { readZipTextFiles } from './excelExport';
 import {
   getDefaultExamHeaderConfig,
   formatQuestionStemForPrint,
@@ -60,7 +60,7 @@ const SAMPLE_QUESTIONS: Question[] = [
   },
   {
     id: 'q3_tf',
-    questionType: 'true_false',
+    type: 'true_false',
     themeId: 'chu_de_1',
     themeName: 'Chủ đề 1: Máy tính và cộng đồng',
     lessonId: 'bai_2',
@@ -279,9 +279,11 @@ describe('examPaperFormatter utilities', () => {
     });
 
     assert.ok(bytes.byteLength > 1000, 'Generated .docx should be a non-empty binary zip');
-    const zip = await JSZip.loadAsync(bytes);
-    const docXml = await zip.file('word/document.xml')?.async('string');
-    const footerXml = await zip.file('word/footer1.xml')?.async('string');
+    const zipFiles = await readZipTextFiles(
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    );
+    const docXml = zipFiles['word/document.xml'];
+    const footerXml = zipFiles['word/footer1.xml'];
 
     assert.ok(docXml, 'word/document.xml must exist in .docx');
     assert.ok(footerXml, 'word/footer1.xml must exist in .docx');

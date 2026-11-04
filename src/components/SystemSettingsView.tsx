@@ -23,6 +23,10 @@ interface SystemSettingsViewProps {
     examsCount: number;
   };
   lastRepoSyncAt: string | null;
+  firebaseUserEmail?: string | null;
+  lastFirestoreSyncAt?: string | null;
+  onConnectFirebaseGoogle?: () => Promise<void>;
+  onSyncFirestoreCloud?: () => Promise<{ ok: boolean; syncedAt?: string; error?: string }>;
   onSaveConfig: (config: SystemConfig) => void;
   onSyncToRepo: () => Promise<{ ok: boolean; updatedAt?: string } | boolean>;
   onExportBackup: () => void;
@@ -34,6 +38,10 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
   config,
   stats,
   lastRepoSyncAt,
+  firebaseUserEmail,
+  lastFirestoreSyncAt,
+  onConnectFirebaseGoogle,
+  onSyncFirestoreCloud,
   onSaveConfig,
   onSyncToRepo,
   onExportBackup,
@@ -50,6 +58,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
     message: string;
   } | null>(null);
   const [isSyncingRepo, setIsSyncingRepo] = useState(false);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -216,6 +225,85 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
           {lastRepoSyncAt && (
             <span className="font-mono text-emerald-800">
               Cập nhật lúc: {new Date(lastRepoSyncAt).toLocaleString('vi-VN')}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ĐỒNG BỘ CƠ SỞ DỮ LIỆU ĐÁM MÂY FIREBASE FIRESTORE */}
+      <div
+        data-testid="firebase-cloud-card"
+        className="bg-gradient-to-r from-blue-50 via-indigo-50 to-slate-50 p-6 rounded-xl border border-blue-200 shadow-sm space-y-3"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <h2 className="text-base font-extrabold text-slate-900 flex items-center space-x-2">
+              <Database className="w-5 h-5 text-blue-700" />
+              <span>Cơ sở dữ liệu đám mây Firebase Firestore (asia-southeast1)</span>
+            </h2>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Kết nối dự án Firebase <code>gen-lang-client-0506944524</code> để lưu trữ và đồng bộ câu hỏi, danh sách học sinh, bảng điểm và các kỳ thi lên Cloud Firestore.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {!firebaseUserEmail && onConnectFirebaseGoogle ? (
+              <button
+                type="button"
+                data-testid="btn-connect-firebase-google"
+                onClick={async () => {
+                  try {
+                    await onConnectFirebaseGoogle();
+                    showBanner('success', 'Đã kết nối tài khoản Google với Cloud Firebase!');
+                  } catch {
+                    showBanner('error', 'Chưa hoàn tất xác thực Google với Firebase.');
+                  }
+                }}
+                className="bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm flex items-center space-x-1.5 cursor-pointer"
+              >
+                <Database className="w-4 h-4" />
+                <span>Đăng nhập Google để đồng bộ Cloud</span>
+              </button>
+            ) : (
+              onSyncFirestoreCloud && (
+                <button
+                  type="button"
+                  data-testid="btn-sync-firestore-now"
+                  disabled={isSyncingCloud}
+                  onClick={async () => {
+                    setIsSyncingCloud(true);
+                    try {
+                      const res = await onSyncFirestoreCloud();
+                      if (res.ok) {
+                        showBanner('success', 'Đã đồng bộ dữ liệu lên Cloud Firestore thành công!');
+                      } else {
+                        showBanner('error', res.error || 'Không thể đồng bộ lên Cloud Firestore.');
+                      }
+                    } catch {
+                      showBanner('error', 'Có lỗi khi đồng bộ lên Cloud Firestore.');
+                    } finally {
+                      setIsSyncingCloud(false);
+                    }
+                  }}
+                  className="bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingCloud ? 'Đang đồng bộ Cloud...' : 'Đồng bộ Cloud Firebase ngay'}</span>
+                </button>
+              )
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-blue-900 bg-blue-100/70 px-3.5 py-2 rounded-lg border border-blue-200">
+          <span className="font-semibold">
+            {firebaseUserEmail
+              ? `Tài khoản Google Cloud đã xác thực: ${firebaseUserEmail}`
+              : 'Trạng thái: Đang hoạt động với bộ nhớ chuẩn + Sẵn sàng kết nối Google Firebase Auth'}
+          </span>
+          {lastFirestoreSyncAt && (
+            <span className="font-mono text-blue-800">
+              Đồng bộ Cloud lúc: {new Date(lastFirestoreSyncAt).toLocaleString('vi-VN')}
             </span>
           )}
         </div>

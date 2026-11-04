@@ -2,6 +2,9 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { AppStorage } from './storage';
 import { Exam } from '../types';
+import { SEED_QUESTIONS } from '../data/seedQuestions';
+import { SEED_STUDENTS } from '../data/seedStudents';
+import { SEED_EXAMS } from '../data/seedExams';
 
 // Mock localStorage for node environment
 const storageMock: Record<string, string> = {};
@@ -194,13 +197,16 @@ describe('examStorage operations', () => {
       assert.ok((capturedPayload as { classes: string[] }).classes.includes('7A11'));
       assert.strictEqual(
         (capturedPayload as { questions: unknown[] }).questions.length,
-        46
+        SEED_QUESTIONS.length
       );
       assert.strictEqual(
         (capturedPayload as { students: unknown[] }).students.length,
-        225
+        SEED_STUDENTS.length
       );
-      assert.strictEqual((capturedPayload as { exams: unknown[] }).exams.length, 7);
+      assert.strictEqual(
+        (capturedPayload as { exams: unknown[] }).exams.length,
+        SEED_EXAMS.length
+      );
     } finally {
       (globalThis as Record<string, unknown>).window = prevWindow;
       globalThis.fetch = prevFetch;
@@ -236,14 +242,14 @@ describe('examStorage operations', () => {
       studentId: firstStudent.id,
       paperCode: 'MD701',
       status: 'da_nop_bai',
-      submittedAt: '2026-11-02T19:00:00.000Z',
+      submittedAt: '2099-01-01T00:00:00.000Z',
       timeRemainingSeconds: 0,
       answers: {},
       score: 9.5,
       correctCount: 19,
       wrongCount: 1,
       unansweredCount: 0,
-      lastHeartbeat: '2026-11-02T19:00:00.000Z',
+      lastHeartbeat: '2099-01-01T00:00:00.000Z',
     });
 
     const updatedStudent = storage.getStudents().find((s) => s.id === firstStudent.id);

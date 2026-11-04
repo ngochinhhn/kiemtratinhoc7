@@ -10,7 +10,8 @@ import { defineConfig, Plugin } from 'vite';
  * và trước khi Giáo viên đăng xuất khỏi tài khoản.
  */
 function repoDataSyncPlugin(): Plugin {
-  const dataDir = path.resolve(__dirname, 'src/data');
+  const rootDir = import.meta.dirname || process.cwd();
+  const dataDir = path.resolve(rootDir, 'src/data');
   const seedQuestionsFile = path.join(dataDir, 'seedQuestions.ts');
   const seedStudentsFile = path.join(dataDir, 'seedStudents.ts');
   const seedExamsFile = path.join(dataDir, 'seedExams.ts');
@@ -61,16 +62,22 @@ function repoDataSyncPlugin(): Plugin {
                       )
                     );
 
-                // 1. Cập nhật trực tiếp src/data/seedQuestions.ts
-                const seedQuestionsContent = `import { Question } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\nexport const SEED_QUESTIONS: Question[] = ${JSON.stringify(
+                // 1. Cập nhật trực tiếp src/data/seedQuestions.ts (chỉ ghi xuống đĩa khi nội dung câu hỏi thay đổi)
+                const nextQuestionsBody = `export const SEED_QUESTIONS: Question[] = ${JSON.stringify(
                   parsed.questions,
                   null,
                   2
                 )};\n`;
-                fs.writeFileSync(seedQuestionsFile, seedQuestionsContent, 'utf-8');
+                const existingQuestionsContent = fs.existsSync(seedQuestionsFile)
+                  ? fs.readFileSync(seedQuestionsFile, 'utf-8')
+                  : '';
+                if (!existingQuestionsContent.includes(nextQuestionsBody)) {
+                  const seedQuestionsContent = `import { Question } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\n${nextQuestionsBody}`;
+                  fs.writeFileSync(seedQuestionsFile, seedQuestionsContent, 'utf-8');
+                }
 
-                // 2. Cập nhật trực tiếp src/data/seedStudents.ts (bao gồm danh sách lớp SEED_CLASSES và danh sách học sinh)
-                const seedStudentsContent = `import { Student } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\nexport const SEED_CLASSES: string[] = ${JSON.stringify(
+                // 2. Cập nhật trực tiếp src/data/seedStudents.ts (chỉ ghi xuống đĩa khi lớp hoặc học sinh thay đổi)
+                const nextStudentsBody = `export const SEED_CLASSES: string[] = ${JSON.stringify(
                   classes,
                   null,
                   2
@@ -79,14 +86,16 @@ function repoDataSyncPlugin(): Plugin {
                   null,
                   2
                 )};\n\nexport function buildSeedStudents(): Student[] {\n  return SEED_STUDENTS.map((s) => ({ ...s }));\n}\n`;
-                fs.writeFileSync(seedStudentsFile, seedStudentsContent, 'utf-8');
+                const existingStudentsContent = fs.existsSync(seedStudentsFile)
+                  ? fs.readFileSync(seedStudentsFile, 'utf-8')
+                  : '';
+                if (!existingStudentsContent.includes(nextStudentsBody)) {
+                  const seedStudentsContent = `import { Student } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\n${nextStudentsBody}`;
+                  fs.writeFileSync(seedStudentsFile, seedStudentsContent, 'utf-8');
+                }
 
-                // 3. Cập nhật trực tiếp src/data/seedExams.ts (bao gồm đề thi, cấu hình hệ thống và mốc đồng bộ)
-                const seedExamsContent = `import { Exam, SystemConfig } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\nexport const SEED_SYNC_ID = ${JSON.stringify(
-                  syncId
-                )};\nexport const SEED_UPDATED_AT = ${JSON.stringify(
-                  nowIso
-                )};\n\nexport const SEED_CONFIG: Partial<SystemConfig> = ${JSON.stringify(
+                // 3. Cập nhật trực tiếp src/data/seedExams.ts (chỉ ghi xuống đĩa khi đề thi hoặc cấu hình thay đổi)
+                const nextExamsBody = `export const SEED_CONFIG: Partial<SystemConfig> = ${JSON.stringify(
                   parsed.config || {},
                   null,
                   2
@@ -95,7 +104,17 @@ function repoDataSyncPlugin(): Plugin {
                   null,
                   2
                 )};\n`;
-                fs.writeFileSync(seedExamsFile, seedExamsContent, 'utf-8');
+                const existingExamsContent = fs.existsSync(seedExamsFile)
+                  ? fs.readFileSync(seedExamsFile, 'utf-8')
+                  : '';
+                if (!existingExamsContent.includes(nextExamsBody)) {
+                  const seedExamsContent = `import { Exam, SystemConfig } from '../types';\n\n// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: ${nowIso}\nexport const SEED_SYNC_ID = ${JSON.stringify(
+                    syncId
+                  )};\nexport const SEED_UPDATED_AT = ${JSON.stringify(
+                    nowIso
+                  )};\n\n${nextExamsBody}`;
+                  fs.writeFileSync(seedExamsFile, seedExamsContent, 'utf-8');
+                }
 
                 res.setHeader('Content-Type', 'application/json');
                 res.statusCode = 200;
@@ -142,32 +161,54 @@ function repoDataSyncPlugin(): Plugin {
   };
 }
 
-export default defineConfig(() => {
-  return {
-    plugins: [react(), tailwindcss(), repoDataSyncPlugin()],
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
+export default defineConfig({
+  plugins: [react(), tailwindcss(), repoDataSyncPlugin()],
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname || process.cwd(), '.'),
+      'firebase/app': path.resolve(
+        import.meta.dirname || process.cwd(),
+        'src/vendor/firebase/app.js'
+      ),
+      'firebase/auth': path.resolve(
+        import.meta.dirname || process.cwd(),
+        'src/vendor/firebase/auth.js'
+      ),
+      'firebase/firestore': path.resolve(
+        import.meta.dirname || process.cwd(),
+        'src/vendor/firebase/firestore.js'
+      ),
+      'pdfjs-dist/legacy/build/pdf.mjs': path.resolve(
+        import.meta.dirname || process.cwd(),
+        'src/vendor/pdf.min.mjs'
+      ),
+      'pdfjs-dist': path.resolve(
+        import.meta.dirname || process.cwd(),
+        'src/vendor/pdf.min.mjs'
+      ),
+      'canvas-confetti': path.resolve(
+        import.meta.dirname || process.cwd(),
+        'src/vendor/confetti.mjs'
+      ),
     },
-    server: {
-      port: 3000,
-      host: '0.0.0.0',
-      allowedHosts: true,
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify—file watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch:
-        process.env.DISABLE_HMR === 'true'
-          ? null
-          : {
-              ignored: [
-                '**/src/data/seedQuestions.ts',
-                '**/src/data/seedStudents.ts',
-                '**/src/data/seedExams.ts',
-              ],
-            },
-    },
-  };
+  },
+  server: {
+    port: 3000,
+    host: '0.0.0.0',
+    allowedHosts: true,
+    // HMR is disabled in AI Studio via DISABLE_HMR env var.
+    // Do not modify—file watching is disabled to prevent flickering during agent edits.
+    hmr: process.env.DISABLE_HMR !== 'true',
+    // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
+    watch:
+      process.env.DISABLE_HMR === 'true'
+        ? null
+        : {
+            ignored: [
+              '**/src/data/seedQuestions.ts',
+              '**/src/data/seedStudents.ts',
+              '**/src/data/seedExams.ts',
+            ],
+          },
+  },
 });

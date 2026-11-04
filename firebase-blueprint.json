@@ -1,0 +1,450 @@
+{
+  "entities": {
+    "AdminProfile": {
+      "title": "AdminProfile",
+      "description": "Verified teacher or administrator profile for managing SmartTest 7.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the teacher/admin.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Teacher display name.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "schoolName": {
+          "type": "string",
+          "description": "School name managed by the teacher.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["ownerId", "displayName", "schoolName", "createdAt", "updatedAt"]
+    },
+    "QuestionItem": {
+      "title": "QuestionItem",
+      "description": "A question in the Informatics 7 question bank.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique question identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the teacher who owns this question.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "questionType": {
+          "type": "string",
+          "description": "Type of question.",
+          "enum": ["multiple_choice", "true_false", "matching"],
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "themeId": {
+          "type": "string",
+          "description": "Curriculum theme ID.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "themeName": {
+          "type": "string",
+          "description": "Curriculum theme title.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "lessonId": {
+          "type": "string",
+          "description": "Curriculum lesson ID.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "lessonName": {
+          "type": "string",
+          "description": "Curriculum lesson title.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "content": {
+          "type": "string",
+          "description": "Question stem content.",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "cognitiveLevel": {
+          "type": "string",
+          "description": "Cognitive level classification.",
+          "enum": ["nhan_biet", "thong_hieu", "van_dung", "van_dung_cao"],
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "reviewStatus": {
+          "type": "string",
+          "description": "Review status of the question.",
+          "enum": ["chua_kiem_duyet", "da_kiem_duyet", "can_chinh_sua"],
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "payloadMap": {
+          "type": "object",
+          "description": "Structured map containing options, statements, matchingPairs, correctOptionId, and explanation."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "questionType",
+        "themeId",
+        "themeName",
+        "lessonId",
+        "lessonName",
+        "content",
+        "cognitiveLevel",
+        "reviewStatus",
+        "payloadMap",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StudentRecord": {
+      "title": "StudentRecord",
+      "description": "Student roster entry and recorded exam scores.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique student identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the teacher who manages this student.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full name of the student.",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "normalizedName": {
+          "type": "string",
+          "description": "ASCII normalized name.",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "loginCode": {
+          "type": "string",
+          "description": "Student login code.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "className": {
+          "type": "string",
+          "description": "Class name (e.g. 7A1).",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "latestScore": {
+          "type": "number",
+          "description": "Most recent exam score on 10-point scale."
+        },
+        "latestExamTitle": {
+          "type": "string",
+          "description": "Title of the most recent exam completed.",
+          "minLength": 0,
+          "maxLength": 250
+        },
+        "examScores": {
+          "type": "object",
+          "description": "Map of examId to score records."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "fullName",
+        "normalizedName",
+        "loginCode",
+        "className",
+        "latestScore",
+        "latestExamTitle",
+        "examScores",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamDocument": {
+      "title": "ExamDocument",
+      "description": "Exam configuration and live activation status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique exam identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the teacher who created the exam.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Exam title.",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "examType": {
+          "type": "string",
+          "description": "Category of the exam.",
+          "enum": ["15_phut", "45_phut", "giua_ky", "cuoi_ky", "tu_chon"],
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "description": "Current operational status of the exam.",
+          "enum": ["chua_mo", "dang_dien_ra", "tam_dung", "da_ket_thuc"],
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "durationMinutes": {
+          "type": "number",
+          "description": "Exam duration in minutes."
+        },
+        "totalQuestions": {
+          "type": "number",
+          "description": "Total number of questions in the exam."
+        },
+        "maxScore": {
+          "type": "number",
+          "description": "Maximum score (typically 10)."
+        },
+        "classes": {
+          "type": "array",
+          "description": "Bounded list of assigned class names (up to 30)."
+        },
+        "questionIds": {
+          "type": "array",
+          "description": "Bounded list of assigned question IDs (up to 100)."
+        },
+        "allowReviewAfterSubmit": {
+          "type": "boolean",
+          "description": "Whether students can review answers after submission."
+        },
+        "shuffleQuestions": {
+          "type": "boolean",
+          "description": "Whether question order is shuffled per student."
+        },
+        "shuffleOptions": {
+          "type": "boolean",
+          "description": "Whether option order is shuffled per student."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "examType",
+        "status",
+        "durationMinutes",
+        "totalQuestions",
+        "maxScore",
+        "classes",
+        "questionIds",
+        "allowReviewAfterSubmit",
+        "shuffleQuestions",
+        "shuffleOptions",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamSessionDocument": {
+      "title": "ExamSessionDocument",
+      "description": "Student exam session and answers under a parent exam.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique session identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "examId": {
+          "type": "string",
+          "description": "Parent exam ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentId": {
+          "type": "string",
+          "description": "Student ID taking the exam.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the session owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "paperCode": {
+          "type": "string",
+          "description": "Generated paper code (e.g. MD701).",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "description": "Session status.",
+          "enum": ["chua_dang_nhap", "da_dang_nhap", "dang_lam_bai", "da_nop_bai", "mat_ket_noi"],
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "timeRemainingSeconds": {
+          "type": "number",
+          "description": "Remaining exam time in seconds."
+        },
+        "currentQuestionIndex": {
+          "type": "number",
+          "description": "Current question index (0-based)."
+        },
+        "score": {
+          "type": "number",
+          "description": "Calculated score on 10-point scale."
+        },
+        "correctCount": {
+          "type": "number",
+          "description": "Count of correct answers."
+        },
+        "wrongCount": {
+          "type": "number",
+          "description": "Count of wrong answers."
+        },
+        "unansweredCount": {
+          "type": "number",
+          "description": "Count of unanswered questions."
+        },
+        "answers": {
+          "type": "object",
+          "description": "Map of questionId to student answer object."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "examId",
+        "studentId",
+        "ownerId",
+        "paperCode",
+        "status",
+        "timeRemainingSeconds",
+        "currentQuestionIndex",
+        "score",
+        "correctCount",
+        "wrongCount",
+        "unansweredCount",
+        "answers",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminProfile" },
+      "description": "Verified administrator/teacher profiles."
+    },
+    "/questions/{questionId}": {
+      "schema": { "$ref": "#/entities/QuestionItem" },
+      "description": "Informatics 7 question bank documents."
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "#/entities/StudentRecord" },
+      "description": "Student roster and score records."
+    },
+    "/exams/{examId}": {
+      "schema": { "$ref": "#/entities/ExamDocument" },
+      "description": "Exam definitions and active status."
+    },
+    "/exams/{examId}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/ExamSessionDocument" },
+      "description": "Student exam sessions belonging to a specific exam."
+    }
+  }
+}
