@@ -190,6 +190,10 @@ export default defineConfig({
         import.meta.dirname || process.cwd(),
         'src/vendor/confetti.mjs'
       ),
+      'lucide-react': path.resolve(
+        import.meta.dirname || process.cwd(),
+        'src/vendor/lucide-react.js'
+      ),
     },
   },
   server: {

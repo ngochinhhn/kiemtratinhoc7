@@ -37,6 +37,9 @@
       ],
       "canvas-confetti": [
         "./src/vendor/confetti.mjs"
+      ],
+      "lucide-react": [
+        "./src/vendor/lucide-react.js"
       ]
     },
     "allowImportingTsExtensions": true,
