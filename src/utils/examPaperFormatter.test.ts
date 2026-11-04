@@ -87,10 +87,10 @@ describe('examPaperFormatter utilities', () => {
       type: 'giua_ky',
       durationMinutes: 45,
     });
-    assert.equal(config.schoolName, 'TRƯỜNG THCS THUỴ LÂM');
+    assert.equal(config.schoolName, 'TRƯỜNG TH & THCS THỤY LÂM');
     assert.equal(config.schoolYear, 'Năm học 2025-2026');
     assert.equal(config.examHeaderTitle, 'ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I');
-    assert.equal(config.subjectHeader, 'MÔN: TOÁN TIN HỌC 7');
+    assert.equal(config.subjectHeader, 'MÔN: TIN HỌC 7');
     assert.equal(config.durationText, '(Thời gian: 45 phút)');
     assert.equal(config.showUnderline, true);
     assert.equal(config.showStudentInfo, true);
@@ -246,7 +246,7 @@ describe('examPaperFormatter utilities', () => {
     });
 
     assert.ok(html.includes('size: A4 portrait'));
-    assert.ok(html.includes('TRƯỜNG THCS THUỴ LÂM'));
+    assert.ok(html.includes('TRƯỜNG TH &amp; THCS THỤY LÂM') || html.includes('TRƯỜNG TH & THCS THỤY LÂM'));
     assert.ok(html.includes('ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I'));
     assert.ok(html.includes('Họ và tên:'));
     assert.ok(html.includes('Lớp:'));
@@ -287,7 +287,7 @@ describe('examPaperFormatter utilities', () => {
 
     assert.ok(docXml, 'word/document.xml must exist in .docx');
     assert.ok(footerXml, 'word/footer1.xml must exist in .docx');
-    assert.ok(docXml!.includes('TRƯỜNG THCS THUỴ LÂM'));
+    assert.ok(docXml!.includes('TRƯỜNG TH &amp; THCS THỤY LÂM'));
     assert.ok(docXml!.includes('Phát biểu nhận định'));
     assert.ok(docXml!.includes('✓ Đúng'));
     assert.ok(footerXml!.includes('PAGE'));

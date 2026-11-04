@@ -1,22 +1,22 @@
 import { Exam, SystemConfig } from '../types';
 
-// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-03T03:13:11.061Z
-export const SEED_SYNC_ID = "sync_1793675591061";
-export const SEED_UPDATED_AT = "2026-11-03T03:13:11.061Z";
+// Tự động cập nhật từ phiên làm việc của Giáo viên lúc: 2026-11-04T13:50:33.881Z
+export const SEED_SYNC_ID = "sync_1793800233881";
+export const SEED_UPDATED_AT = "2026-11-04T13:50:33.881Z";
 
 export const SEED_CONFIG: Partial<SystemConfig> = {
   "serverIp": "192.168.1.15",
   "serverPort": 3000,
   "schoolName": "Trường TH & THCS Thụy Lâm",
   "subjectName": "Tin học 7 - Bộ sách Kết nối tri thức với cuộc sống",
-  "activeExamId": "exam_1793627619414",
+  "activeExamId": "exam_1793800027713",
   "autoSaveIntervalSeconds": 5
 };
 
 export const SEED_EXAMS: Exam[] = [
   {
-    "id": "exam_1793627619414",
-    "title": "Đề thi thử giữa học kì I - Tin học 7",
+    "id": "exam_1793800027713",
+    "title": "Đề thi giữa học kì I - Tin học 7",
     "type": "giua_ky",
     "classes": [
       "7A10",
@@ -25,122 +25,97 @@ export const SEED_EXAMS: Exam[] = [
       "7A8",
       "7A9"
     ],
-    "durationMinutes": 45,
-    "totalQuestions": 40,
+    "durationMinutes": 30,
+    "totalQuestions": 20,
     "maxScore": 10,
     "questionIds": [
-      "manual_1793517901423",
-      "pdf_import_1793437071764_12",
-      "pdf_import_1793437071765_26",
-      "pdf_import_1793437071764_22",
-      "pdf_import_1793437071763_3",
-      "pdf_import_1793437071764_18",
-      "manual_1793518905656",
-      "pdf_import_1793437071764_23",
-      "pdf_import_1793437071764_25",
-      "pdf_import_1793437071764_4",
-      "pdf_import_1793437071765_28",
-      "pdf_import_1793437071764_17",
-      "pdf_import_1793437071764_13",
-      "pdf_import_1793437071764_15",
-      "pdf_import_1793437071764_8",
-      "pdf_import_1793437071764_19",
-      "pdf_import_1793437071764_5",
-      "pdf_import_1793437071764_16",
-      "pdf_import_1793437071764_21",
-      "pdf_import_1793437071764_14",
-      "pdf_import_1793437071765_27",
       "pdf_import_1793437071764_20",
-      "pdf_import_1793437071765_29",
+      "pdf_import_1793437071764_9",
+      "pdf_import_1793437071764_25",
       "pdf_import_1793437071764_24",
-      "pdf_import_1793437071763_2",
-      "pdf_import_1793437071765_35",
-      "pdf_import_1793437071765_32",
+      "pdf_import_1793437071763_1",
+      "pdf_import_1793437071764_13",
+      "pdf_import_1793437071764_17",
       "pdf_import_1793437071765_36",
-      "pdf_import_1793437071765_31",
+      "pdf_import_1793437071765_35",
       "pdf_import_1793437071765_33",
       "pdf_import_1793437071765_34",
-      "pdf_import_1793437071765_37",
-      "pdf_import_1793437071766_41",
+      "pdf_import_1793437071765_32",
+      "pdf_import_1793437071765_31",
       "pdf_import_1793437071766_45",
-      "pdf_import_1793437071766_42",
-      "pdf_import_1793437071766_43",
       "pdf_import_1793437071766_40",
-      "pdf_import_1793437071766_46",
+      "pdf_import_1793437071765_38",
       "pdf_import_1793437071766_44",
-      "pdf_import_1793437071765_38"
+      "pdf_import_1793437071766_43",
+      "pdf_import_1793437071765_37",
+      "pdf_import_1793437071766_46"
     ],
     "status": "dang_dien_ra",
-    "allowReviewAfterSubmit": true,
+    "allowReviewAfterSubmit": false,
     "shuffleQuestions": true,
     "shuffleOptions": false,
     "headerConfig": {
-      "schoolName": "TRƯỜNG THCS THUỴ LÂM",
+      "schoolName": "TRƯỜNG TH & THCS THỤY LÂM",
       "schoolYear": "Năm học 2025-2026",
       "examHeaderTitle": "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I",
-      "subjectHeader": "MÔN: TOÁN TIN HỌC 7",
-      "durationText": "(Thời gian: 45 phút)",
+      "subjectHeader": "MÔN: TIN HỌC 7",
+      "durationText": "(Thời gian: 30 phút)",
       "showUnderline": true,
       "showStudentInfo": true,
       "showAnswerGrid": false
     },
-    "createdAt": "2026-11-02T13:53:39.414Z",
-    "startTime": "2026-11-03T01:15:54.117Z",
-    "endTime": "2026-11-03T01:16:00.501Z"
+    "createdAt": "2026-11-04T13:47:07.713Z",
+    "startTime": "2026-11-04T13:47:22.354Z"
   },
   {
-    "id": "exam_1793592657050",
+    "id": "exam_1793713079477",
     "title": "Đề kiểm tra đánh giá giữa học kì I - Tin học 7",
     "type": "giua_ky",
     "classes": [
-      "7A4",
-      "7A10",
-      "7A5",
-      "7A8",
-      "7A9"
+      "7A4"
     ],
     "durationMinutes": 35,
     "totalQuestions": 20,
     "maxScore": 10,
     "questionIds": [
+      "pdf_import_1793437071764_25",
+      "pdf_import_1793437071764_17",
+      "pdf_import_1793437071763_3",
       "pdf_import_1793437071763_2",
-      "manual_1793517901423",
-      "pdf_import_1793437071764_21",
-      "pdf_import_1793437071764_7",
       "pdf_import_1793437071765_27",
-      "pdf_import_1793437071764_9",
+      "pdf_import_1793437071764_22",
       "pdf_import_1793437071764_23",
       "pdf_import_1793437071765_32",
-      "pdf_import_1793437071765_33",
       "pdf_import_1793437071765_31",
       "pdf_import_1793437071765_35",
-      "pdf_import_1793437071765_36",
+      "pdf_import_1793437071765_33",
       "pdf_import_1793437071765_34",
-      "pdf_import_1793437071766_46",
-      "pdf_import_1793437071766_42",
+      "pdf_import_1793437071765_36",
       "pdf_import_1793437071765_38",
-      "pdf_import_1793437071766_43",
       "pdf_import_1793437071765_37",
-      "pdf_import_1793437071766_41",
-      "pdf_import_1793437071766_45"
+      "pdf_import_1793437071766_46",
+      "pdf_import_1793437071766_45",
+      "pdf_import_1793437071766_44",
+      "pdf_import_1793437071766_40",
+      "pdf_import_1793437071766_41"
     ],
-    "status": "tam_dung",
+    "status": "dang_dien_ra",
     "allowReviewAfterSubmit": false,
     "shuffleQuestions": true,
     "shuffleOptions": false,
     "headerConfig": {
-      "schoolName": "TRƯỜNG THCS THUỴ LÂM",
+      "schoolName": "TRƯỜNG TH & THCS THỤY LÂM",
       "schoolYear": "Năm học 2025-2026",
       "examHeaderTitle": "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I",
-      "subjectHeader": "MÔN: TOÁN TIN HỌC 7",
+      "subjectHeader": "MÔN: TIN HỌC 7",
       "durationText": "(Thời gian: 35 phút)",
       "showUnderline": true,
       "showStudentInfo": true,
       "showAnswerGrid": false
     },
-    "createdAt": "2026-11-02T04:10:57.050Z",
-    "updatedAt": "2026-11-03T01:06:31.262Z",
-    "startTime": "2026-11-03T01:16:03.762Z"
+    "createdAt": "2026-11-03T13:37:59.477Z",
+    "startTime": "2026-11-04T08:27:21.342Z",
+    "updatedAt": "2026-11-04T13:11:33.856Z"
   },
   {
     "id": "exam_1793592601163",
@@ -174,22 +149,23 @@ export const SEED_EXAMS: Exam[] = [
       "pdf_import_1793437071766_40",
       "pdf_import_1793437071766_46"
     ],
-    "status": "tam_dung",
+    "status": "dang_dien_ra",
     "allowReviewAfterSubmit": true,
     "shuffleQuestions": true,
     "shuffleOptions": false,
     "headerConfig": {
-      "schoolName": "TRƯỜNG THCS THUỴ LÂM",
+      "schoolName": "TRƯỜNG TH & THCS THỤY LÂM",
       "schoolYear": "Năm học 2025-2026",
       "examHeaderTitle": "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I",
-      "subjectHeader": "MÔN: TOÁN TIN HỌC 7",
+      "subjectHeader": "MÔN: TIN HỌC 7",
       "durationText": "(Thời gian: 35 phút)",
       "showUnderline": true,
       "showStudentInfo": true,
       "showAnswerGrid": false
     },
     "createdAt": "2026-11-02T04:10:01.163Z",
-    "startTime": "2026-11-03T00:59:48.157Z"
+    "startTime": "2026-11-03T00:59:48.157Z",
+    "updatedAt": "2026-11-04T13:12:05.468Z"
   },
   {
     "id": "exam_1793592576675",
@@ -223,21 +199,23 @@ export const SEED_EXAMS: Exam[] = [
       "pdf_import_1793437071766_46",
       "pdf_import_1793437071766_40"
     ],
-    "status": "chua_mo",
+    "status": "dang_dien_ra",
     "allowReviewAfterSubmit": true,
     "shuffleQuestions": true,
     "shuffleOptions": false,
     "headerConfig": {
-      "schoolName": "TRƯỜNG THCS THUỴ LÂM",
+      "schoolName": "TRƯỜNG TH & THCS THỤY LÂM",
       "schoolYear": "Năm học 2025-2026",
       "examHeaderTitle": "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I",
-      "subjectHeader": "MÔN: TOÁN TIN HỌC 7",
+      "subjectHeader": "MÔN: TIN HỌC 7",
       "durationText": "(Thời gian: 35 phút)",
       "showUnderline": true,
       "showStudentInfo": true,
       "showAnswerGrid": false
     },
-    "createdAt": "2026-11-02T04:09:36.675Z"
+    "createdAt": "2026-11-02T04:09:36.675Z",
+    "startTime": "2026-11-03T04:19:29.290Z",
+    "updatedAt": "2026-11-04T13:12:24.218Z"
   },
   {
     "id": "exam_1793592544875",
@@ -271,21 +249,23 @@ export const SEED_EXAMS: Exam[] = [
       "pdf_import_1793437071766_42",
       "pdf_import_1793437071766_43"
     ],
-    "status": "chua_mo",
+    "status": "dang_dien_ra",
     "allowReviewAfterSubmit": true,
     "shuffleQuestions": true,
     "shuffleOptions": false,
     "headerConfig": {
-      "schoolName": "TRƯỜNG THCS THUỴ LÂM",
+      "schoolName": "TRƯỜNG TH & THCS THỤY LÂM",
       "schoolYear": "Năm học 2025-2026",
       "examHeaderTitle": "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I",
-      "subjectHeader": "MÔN: TOÁN TIN HỌC 7",
+      "subjectHeader": "MÔN: TIN HỌC 7",
       "durationText": "(Thời gian: 35 phút)",
       "showUnderline": true,
       "showStudentInfo": true,
       "showAnswerGrid": false
     },
-    "createdAt": "2026-11-02T04:09:04.875Z"
+    "createdAt": "2026-11-02T04:09:04.875Z",
+    "startTime": "2026-11-04T08:27:37.549Z",
+    "updatedAt": "2026-11-04T13:12:35.701Z"
   },
   {
     "id": "exam_1793592525982",
@@ -319,75 +299,22 @@ export const SEED_EXAMS: Exam[] = [
       "pdf_import_1793437071766_42",
       "pdf_import_1793437071766_45"
     ],
-    "status": "chua_mo",
+    "status": "dang_dien_ra",
     "allowReviewAfterSubmit": true,
     "shuffleQuestions": true,
     "shuffleOptions": false,
     "headerConfig": {
-      "schoolName": "TRƯỜNG THCS THUỴ LÂM",
+      "schoolName": "TRƯỜNG TH & THCS THỤY LÂM",
       "schoolYear": "Năm học 2025-2026",
       "examHeaderTitle": "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I",
-      "subjectHeader": "MÔN: TOÁN TIN HỌC 7",
+      "subjectHeader": "MÔN: TIN HỌC 7",
       "durationText": "(Thời gian: 35 phút)",
       "showUnderline": true,
       "showStudentInfo": true,
       "showAnswerGrid": false
     },
-    "createdAt": "2026-11-02T04:08:45.982Z"
-  },
-  {
-    "id": "exam_1793592039861",
-    "title": "Đề kiểm tra đánh giá giữa học kì I - Tin học 7",
-    "type": "giua_ky",
-    "classes": [
-      "7A10",
-      "7A4",
-      "7A5",
-      "7A8",
-      "7A9"
-    ],
-    "durationMinutes": 35,
-    "totalQuestions": 20,
-    "maxScore": 10,
-    "questionIds": [
-      "pdf_import_1793437071764_17",
-      "pdf_import_1793437071763_3",
-      "pdf_import_1793437071764_10",
-      "pdf_import_1793437071764_13",
-      "pdf_import_1793437071764_25",
-      "pdf_import_1793437071764_23",
-      "pdf_import_1793437071764_18",
-      "pdf_import_1793437071764_16",
-      "pdf_import_1793437071765_28",
-      "manual_1793517901423",
-      "pdf_import_1793437071764_20",
-      "pdf_import_1793437071765_31",
-      "pdf_import_1793437071765_36",
-      "pdf_import_1793437071765_32",
-      "pdf_import_1793437071765_34",
-      "pdf_import_1793437071766_46",
-      "pdf_import_1793437071766_41",
-      "pdf_import_1793437071766_40",
-      "pdf_import_1793437071766_42",
-      "pdf_import_1793437071766_45"
-    ],
-    "status": "da_ket_thuc",
-    "allowReviewAfterSubmit": true,
-    "shuffleQuestions": true,
-    "shuffleOptions": false,
-    "headerConfig": {
-      "schoolName": "TRƯỜNG THCS THUỴ LÂM",
-      "schoolYear": "Năm học 2025-2026",
-      "examHeaderTitle": "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I",
-      "subjectHeader": "MÔN: TOÁN TIN HỌC 7",
-      "durationText": "(Thời gian: 35 phút)",
-      "showUnderline": true,
-      "showStudentInfo": true,
-      "showAnswerGrid": false
-    },
-    "createdAt": "2026-11-02T04:00:39.861Z",
-    "startTime": "2026-11-02T09:19:35.819Z",
-    "updatedAt": "2026-11-02T04:05:22.186Z",
-    "endTime": "2026-11-02T09:20:18.107Z"
+    "createdAt": "2026-11-02T04:08:45.982Z",
+    "startTime": "2026-11-04T08:27:40.961Z",
+    "updatedAt": "2026-11-04T13:12:44.455Z"
   }
 ];

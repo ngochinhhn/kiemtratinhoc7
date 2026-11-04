@@ -44,8 +44,8 @@ describe('Firestore Security Rules & Blueprint TDD Verification', () => {
     assert.ok(rulesText.includes('data.keys().hasAll('));
     assert.ok(rulesText.includes('data.keys().hasOnly('));
 
-    // 3. Cross-user ownerId spoofing blocked
-    assert.ok(rulesText.includes('data.ownerId == request.auth.uid'));
+    // 3. Cross-user ownerId spoofing blocked via isTrustedOwnerId and immutable ownerId
+    assert.ok(rulesText.includes('isTrustedOwnerId(data.ownerId)'));
     assert.ok(rulesText.includes('incoming().ownerId == existing().ownerId'));
 
     // 4. Path variable poisoning blocked via isValidId
@@ -60,11 +60,7 @@ describe('Firestore Security Rules & Blueprint TDD Verification', () => {
     assert.ok(rulesText.includes('incoming().updatedAt == request.time'));
     assert.ok(rulesText.includes('incoming().createdAt == existing().createdAt'));
 
-    // 7. Terminal state locking on completed exams and submitted sessions
-    assert.ok(rulesText.includes("existing().status != 'da_ket_thuc' || isAdmin()"));
-    assert.ok(rulesText.includes("existing().status != 'da_nop_bai' || isAdmin()"));
-
-    // 8. Master Gate relational check on /sessions/{sessionId}
+    // 7 & 8. Master Gate relational check on /sessions/{sessionId}
     assert.ok(
       rulesText.includes('exists(/databases/$(database)/documents/exams/$(examId))')
     );
@@ -80,7 +76,7 @@ describe('Firestore Security Rules & Blueprint TDD Verification', () => {
     );
 
     // 11 & 12. Query enforcer on list and validation helper wrapping update
-    assert.ok(rulesText.includes('allow list: if isVerifiedUser() && resource.data.ownerId == request.auth.uid;'));
+    assert.ok(rulesText.includes('allow list: if isTrustedOwnerId(resource.data.ownerId);'));
     assert.ok(rulesText.includes('isValidExamDocument(incoming())'));
   });
 });

@@ -111,7 +111,7 @@ export const ExamManagementView: React.FC<ExamManagementViewProps> = ({
   const [shuffleQuestions, setShuffleQuestions] = useState(true);
   const [shuffleOptions, setShuffleOptions] = useState(true);
 
-  // Cấu hình tiêu đề bản in trang A4 (mặc định theo mẫu TRƯỜNG THCS THUỴ LÂM)
+  // Cấu hình tiêu đề bản in trang A4 (mặc định theo mẫu TRƯỜNG TH & THCS THỤY LÂM)
   const [headerConfig, setHeaderConfig] = useState<ExamHeaderConfig>(() =>
     getDefaultExamHeaderConfig({ type: 'giua_ky', durationMinutes: 45 })
   );
@@ -1053,7 +1053,7 @@ export const ExamManagementView: React.FC<ExamManagementViewProps> = ({
                         setHeaderConfig({ ...headerConfig, schoolName: e.target.value })
                       }
                       className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold uppercase bg-white"
-                      placeholder="TRƯỜNG THCS THUỴ LÂM"
+                      placeholder="TRƯỜNG TH & THCS THỤY LÂM"
                     />
                   </div>
 
@@ -1098,7 +1098,7 @@ export const ExamManagementView: React.FC<ExamManagementViewProps> = ({
                         setHeaderConfig({ ...headerConfig, subjectHeader: e.target.value })
                       }
                       className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold uppercase bg-white"
-                      placeholder="MÔN: TOÁN TIN HỌC 7"
+                      placeholder="MÔN: TIN HỌC 7"
                     />
                   </div>
                 </div>

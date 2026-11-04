@@ -96,10 +96,10 @@ export interface Student {
 }
 
 export interface ExamHeaderConfig {
-  schoolName: string; // e.g. "TRƯỜNG THCS THUỴ LÂM"
+  schoolName: string; // e.g. "TRƯỜNG TH & THCS THỤY LÂM"
   schoolYear: string; // e.g. "Năm học 2025-2026"
   examHeaderTitle: string; // e.g. "ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I"
-  subjectHeader: string; // e.g. "MÔN: TOÁN TIN HỌC 7"
+  subjectHeader: string; // e.g. "MÔN: TIN HỌC 7"
   durationText?: string; // e.g. "(Thời gian: 45 phút)"
   showUnderline?: boolean; // Đường kẻ ngang dưới Năm học
   showStudentInfo?: boolean; // Dòng Họ và tên: ... Lớp: ...

@@ -73,17 +73,37 @@ export function getDefaultExamHeaderTitleByType(type?: ExamType): string {
   }
 }
 
+export function normalizeExamSchoolName(raw?: string): string {
+  const trimmed = String(raw || '').trim();
+  if (
+    !trimmed ||
+    /^trường\s+thcs\s+thu[yỵ]\s+lâm$/i.test(trimmed) ||
+    /^trường\s+th\s*&\s*thcs\s+thu[yỵ]\s+lâm$/i.test(trimmed)
+  ) {
+    return 'TRƯỜNG TH & THCS THỤY LÂM';
+  }
+  return trimmed;
+}
+
+export function normalizeExamSubjectHeader(raw?: string): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed || /toán\s+tin\s+học\s*7/i.test(trimmed)) {
+    return 'MÔN: TIN HỌC 7';
+  }
+  return trimmed;
+}
+
 /**
- * Khởi tạo cấu hình tiêu đề bản in A4 chuẩn theo mẫu trường THCS
+ * Khởi tạo cấu hình tiêu đề bản in A4 chuẩn theo mẫu trường TH & THCS Thụy Lâm
  */
 export function getDefaultExamHeaderConfig(exam?: Partial<Exam>): ExamHeaderConfig {
   const existing = exam?.headerConfig;
   const duration = exam?.durationMinutes ?? 45;
   return {
-    schoolName: existing?.schoolName || 'TRƯỜNG THCS THUỴ LÂM',
+    schoolName: normalizeExamSchoolName(existing?.schoolName),
     schoolYear: existing?.schoolYear || 'Năm học 2025-2026',
     examHeaderTitle: existing?.examHeaderTitle || getDefaultExamHeaderTitleByType(exam?.type),
-    subjectHeader: existing?.subjectHeader || 'MÔN: TOÁN TIN HỌC 7',
+    subjectHeader: normalizeExamSubjectHeader(existing?.subjectHeader),
     durationText: existing?.durationText || `(Thời gian: ${duration} phút)`,
     showUnderline: existing?.showUnderline ?? true,
     showStudentInfo: existing?.showStudentInfo ?? true,
@@ -1659,7 +1679,7 @@ export async function exportExamPaperToPdfA4(opts: A4PrintRenderOptions): Promis
 
   ctx.textAlign = 'center';
   ctx.font = `bold ${baseFontPx}px "Times New Roman", Times, serif`;
-  ctx.fillText((headerConfig.schoolName || 'TRƯỜNG THCS THUỴ LÂM').toUpperCase(), leftCenterX, y);
+  ctx.fillText((headerConfig.schoolName || 'TRƯỜNG TH & THCS THỤY LÂM').toUpperCase(), leftCenterX, y);
   ctx.fillText(
     (headerConfig.examHeaderTitle || 'ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I').toUpperCase(),
     rightCenterX,
@@ -1669,7 +1689,7 @@ export async function exportExamPaperToPdfA4(opts: A4PrintRenderOptions): Promis
   const row2Y = y + lineH;
   ctx.font = `bold ${baseFontPx}px "Times New Roman", Times, serif`;
   ctx.fillText(headerConfig.schoolYear || 'Năm học 2025-2026', leftCenterX, row2Y);
-  ctx.fillText((headerConfig.subjectHeader || 'MÔN: TOÁN TIN HỌC 7').toUpperCase(), rightCenterX, row2Y);
+  ctx.fillText((headerConfig.subjectHeader || 'MÔN: TIN HỌC 7').toUpperCase(), rightCenterX, row2Y);
 
   const row3Y = row2Y + lineH;
   if (headerConfig.showUnderline !== false) {
@@ -2112,7 +2132,7 @@ export async function exportExamPaperToPdfA4(opts: A4PrintRenderOptions): Promis
     pCtx.font = `${baseFontPx - 3}px "Times New Roman", Times, serif`;
     pCtx.textAlign = 'left';
     pCtx.fillText(
-      `${headerConfig.schoolName || 'TRƯỜNG THCS THUỴ LÂM'} • ${
+      `${headerConfig.schoolName || 'TRƯỜNG TH & THCS THỤY LÂM'} • ${
         variantCode === 'GOC' ? 'Đề gốc' : `Mã đề ${variantCode}`
       }`,
       MARGIN_LEFT,
@@ -2271,7 +2291,7 @@ export async function buildExamPaperDocxBytes(opts: A4PrintRenderOptions): Promi
 
   // 1. Bảng tiêu đề 2 cột (44% - 56%)
   const leftHeaderParas = [
-    wPara(wRun((headerConfig.schoolName || 'TRƯỜNG THCS THUỴ LÂM').toUpperCase(), { bold: true }), {
+    wPara(wRun((headerConfig.schoolName || 'TRƯỜNG TH & THCS THỤY LÂM').toUpperCase(), { bold: true }), {
       align: 'center',
       spaceAfter: 20,
     }),
@@ -2294,7 +2314,7 @@ export async function buildExamPaperDocxBytes(opts: A4PrintRenderOptions): Promi
       }),
       { align: 'center', spaceAfter: 20 }
     ),
-    wPara(wRun((headerConfig.subjectHeader || 'MÔN: TOÁN TIN HỌC 7').toUpperCase(), { bold: true }), {
+    wPara(wRun((headerConfig.subjectHeader || 'MÔN: TIN HỌC 7').toUpperCase(), { bold: true }), {
       align: 'center',
       spaceAfter: 20,
     }),
@@ -2662,7 +2682,7 @@ export async function buildExamPaperDocxBytes(opts: A4PrintRenderOptions): Promi
   </w:body>
 </w:document>`;
 
-  const footerLeftLabel = `${headerConfig.schoolName || 'TRƯỜNG THCS THUỴ LÂM'} • ${
+  const footerLeftLabel = `${headerConfig.schoolName || 'TRƯỜNG TH & THCS THỤY LÂM'} • ${
     variantCode === 'GOC' ? 'Đề gốc' : `Mã đề ${variantCode}`
   }`;
 

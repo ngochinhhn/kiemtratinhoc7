@@ -184,10 +184,10 @@ export const ExamPaperPreviewModal: React.FC<ExamPaperPreviewModalProps> = ({
 
   const handleResetDefaultHeader = () => {
     setHeaderConfig({
-      schoolName: 'TRƯỜNG THCS THUỴ LÂM',
+      schoolName: 'TRƯỜNG TH & THCS THỤY LÂM',
       schoolYear: 'Năm học 2025-2026',
       examHeaderTitle: getDefaultExamHeaderTitleByType(exam.type),
-      subjectHeader: 'MÔN: TOÁN TIN HỌC 7',
+      subjectHeader: 'MÔN: TIN HỌC 7',
       durationText: `(Thời gian: ${exam.durationMinutes} phút)`,
       showUnderline: true,
       showStudentInfo: true,
@@ -382,7 +382,7 @@ export const ExamPaperPreviewModal: React.FC<ExamPaperPreviewModalProps> = ({
                   onChange={(e) =>
                     setHeaderConfig({ ...headerConfig, schoolName: e.target.value })
                   }
-                  placeholder="TRƯỜNG THCS THUỴ LÂM"
+                  placeholder="TRƯỜNG TH & THCS THỤY LÂM"
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold uppercase"
                 />
               </div>
@@ -449,19 +449,10 @@ export const ExamPaperPreviewModal: React.FC<ExamPaperPreviewModalProps> = ({
                   onChange={(e) =>
                     setHeaderConfig({ ...headerConfig, subjectHeader: e.target.value })
                   }
-                  placeholder="MÔN: TOÁN TIN HỌC 7"
+                  placeholder="MÔN: TIN HỌC 7"
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold uppercase"
                 />
                 <div className="flex gap-1.5 mt-1.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setHeaderConfig({ ...headerConfig, subjectHeader: 'MÔN: TOÁN TIN HỌC 7' })
-                    }
-                    className="text-[10px] px-2 py-0.5 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-600 rounded border border-slate-200"
-                  >
-                    MÔN: TOÁN TIN HỌC 7
-                  </button>
                   <button
                     type="button"
                     onClick={() =>
@@ -746,7 +737,7 @@ export const ExamPaperPreviewModal: React.FC<ExamPaperPreviewModalProps> = ({
                       <table className="w-full border-collapse mb-4">
                         <tbody>
                           <tr>
-                            {/* Cột trái: TRƯỜNG THCS THUỴ LÂM / Năm học 2025-2026 / Đường gạch ngang */}
+                            {/* Cột trái: TRƯỜNG TH & THCS THỤY LÂM / Năm học 2025-2026 / Đường gạch ngang */}
                             <td className="w-[44%] align-top text-center pr-2">
                               <div
                                 data-testid="a4-header-school"
@@ -765,7 +756,7 @@ export const ExamPaperPreviewModal: React.FC<ExamPaperPreviewModalProps> = ({
                               )}
                             </td>
 
-                            {/* Cột phải: ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I / MÔN: TOÁN TIN HỌC 7 / (Thời gian: ... phút) */}
+                            {/* Cột phải: ĐỀ KIỂM TRA ĐÁNH GIÁ GIỮA HỌC KÌ I / MÔN: TIN HỌC 7 / (Thời gian: ... phút) */}
                             <td className="w-[56%] align-top text-center pl-2">
                               <div
                                 data-testid="a4-header-title"
