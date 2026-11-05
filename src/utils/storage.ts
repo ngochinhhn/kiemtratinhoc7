@@ -16,6 +16,11 @@ import {
 } from '../data/seedExams';
 import { createStudentExamPaper } from './examShuffler';
 import { gradeStudentExam, normalizeQuestionStructure } from './grading';
+import {
+  normalizeExamSchoolName,
+  normalizeExamSubjectHeader,
+} from './examPaperFormatter';
+import type { FirestoreStudentSubmission } from './firebaseSync';
 
 const KEYS = {
   QUESTIONS: 'smarttest7_questions_v1',
@@ -614,11 +619,33 @@ export class AppStorage {
 
   // --- EXAMS ---
   public getExams(): Exam[] {
-    return safeGetItem<Exam[]>(KEYS.EXAMS, []);
+    const rawExams = safeGetItem<Exam[]>(KEYS.EXAMS, []);
+    return rawExams.map((ex) => {
+      if (!ex || !ex.headerConfig) return ex;
+      return {
+        ...ex,
+        headerConfig: {
+          ...ex.headerConfig,
+          schoolName: normalizeExamSchoolName(ex.headerConfig.schoolName),
+          subjectHeader: normalizeExamSubjectHeader(ex.headerConfig.subjectHeader),
+        },
+      };
+    });
   }
 
   public saveExams(exams: Exam[]): void {
-    safeSetItem(KEYS.EXAMS, exams);
+    const normalizedExams = exams.map((ex) => {
+      if (!ex || !ex.headerConfig) return ex;
+      return {
+        ...ex,
+        headerConfig: {
+          ...ex.headerConfig,
+          schoolName: normalizeExamSchoolName(ex.headerConfig.schoolName),
+          subjectHeader: normalizeExamSubjectHeader(ex.headerConfig.subjectHeader),
+        },
+      };
+    });
+    safeSetItem(KEYS.EXAMS, normalizedExams);
 
     // Đồng bộ lại papers của các đề thi nếu danh sách câu hỏi (questionIds) của đề vừa được giáo viên chỉnh sửa
     const papers = this.getPapers();
@@ -849,8 +876,20 @@ export class AppStorage {
   // --- CONFIG ---
   public getConfig(): SystemConfig {
     const cfg = safeGetItem<SystemConfig>(KEYS.CONFIG, DEFAULT_CONFIG);
-    if (!cfg.schoolName || cfg.schoolName === 'Trường THCS Lê Quý Đôn') {
+    let changed = false;
+    if (
+      !cfg.schoolName ||
+      cfg.schoolName === 'Trường THCS Lê Quý Đôn' ||
+      /^trường\s+thcs\s+thu[yỵ]\s+lâm$/i.test(cfg.schoolName.trim())
+    ) {
       cfg.schoolName = 'Trường TH & THCS Thụy Lâm';
+      changed = true;
+    }
+    if (cfg.subjectName && /toán\s+tin\s+học\s*7/i.test(cfg.subjectName)) {
+      cfg.subjectName = cfg.subjectName.replace(/toán\s+tin\s+học\s*7/gi, 'Tin học 7');
+      changed = true;
+    }
+    if (changed) {
       safeSetItem(KEYS.CONFIG, cfg);
     }
     return cfg;
@@ -859,6 +898,280 @@ export class AppStorage {
   public saveConfig(config: SystemConfig): void {
     safeSetItem(KEYS.CONFIG, config);
     this.markLocalEditAndSync();
+  }
+
+  /**
+   * Tự động khởi tạo / cập nhật mã đề (papers) và phiên thi (sessions) cho tất cả các kỳ thi đang mở
+   * khi nhận dữ liệu thời gian thực từ Firebase Firestore.
+   */
+  public rebuildActiveExamPapersAndSessions(): void {
+    const exams = this.getExams();
+    const runningExams = exams.filter((e) => e.status === 'dang_dien_ra');
+    const targetExams = runningExams.length > 0 ? runningExams : exams[0] ? [exams[0]] : [];
+    if (targetExams.length === 0) return;
+
+    const papers = this.getPapers();
+    const students = this.getStudents();
+    const questions = this.getQuestions();
+    const questionMap = new Map(questions.map((q) => [q.id, q]));
+    const sessions = this.getSessions();
+    let papersChanged = false;
+    let sessionsChanged = false;
+
+    for (const activeExam of targetExams) {
+      const eligibleStudents = students.filter((s) => activeExam.classes.includes(s.className));
+      const examQuestions = (activeExam.questionIds || [])
+        .map((id) => questionMap.get(id))
+        .filter((q): q is Question => Boolean(q));
+
+      if (eligibleStudents.length > 0 && examQuestions.length > 0) {
+        eligibleStudents.forEach((student, idx) => {
+          const key = `${student.id}_${activeExam.id}`;
+          const existingPaper = papers[key];
+          const needsRebuildPaper =
+            !existingPaper ||
+            existingPaper.questionOrder.length !== examQuestions.length ||
+            !examQuestions.every((eq) => existingPaper.questionOrder.includes(eq.id));
+
+          if (needsRebuildPaper) {
+            papers[key] = createStudentExamPaper(
+              student.id,
+              activeExam.id,
+              idx,
+              examQuestions,
+              activeExam.shuffleQuestions,
+              activeExam.shuffleOptions
+            );
+            papersChanged = true;
+          }
+
+          if (!sessions[key]) {
+            sessions[key] = {
+              id: `sess_${student.id}_${activeExam.id}`,
+              examId: activeExam.id,
+              studentId: student.id,
+              paperCode: papers[key].paperCode,
+              status: 'chua_dang_nhap',
+              timeRemainingSeconds: activeExam.durationMinutes * 60,
+              answers: {},
+              lastHeartbeat: new Date().toISOString(),
+              workstationIp: `192.168.1.${100 + (student.workstationNumber || idx + 1)}`,
+            };
+            sessionsChanged = true;
+          }
+        });
+      }
+    }
+
+    if (papersChanged) {
+      this.savePapers(papers);
+    }
+    if (sessionsChanged) {
+      safeSetItem(KEYS.SESSIONS, sessions);
+    }
+  }
+
+  /**
+   * Ưu tiên tuyệt đối dữ liệu Đề thi (exams) từ Firebase Firestore:
+   * Ghi đè localStorage và bỏ qua hoàn toàn dữ liệu cũ trong seedExams.ts.
+   */
+  public applyRemoteExamsFromFirestore(remoteExams: Exam[]): void {
+    if (!Array.isArray(remoteExams) || remoteExams.length === 0) return;
+
+    const normalized = remoteExams.map((ex) => ({
+      ...ex,
+      headerConfig: ex.headerConfig
+        ? {
+            ...ex.headerConfig,
+            schoolName: normalizeExamSchoolName(ex.headerConfig.schoolName),
+            subjectHeader: normalizeExamSubjectHeader(ex.headerConfig.subjectHeader),
+          }
+        : undefined,
+    }));
+
+    safeSetItem(KEYS.EXAMS, normalized);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(KEYS.HAS_LOCAL_EDITS, 'true');
+        if (SEED_SYNC_ID) {
+          localStorage.setItem(KEYS.APPLIED_PUBLISH_ID, SEED_SYNC_ID);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const cfg = this.getConfig();
+    const running = normalized.find((e) => e.status === 'dang_dien_ra');
+    if (running && (!cfg.activeExamId || !normalized.some((e) => e.id === cfg.activeExamId))) {
+      cfg.activeExamId = running.id;
+      safeSetItem(KEYS.CONFIG, cfg);
+    }
+
+    this.rebuildActiveExamPapersAndSessions();
+  }
+
+  /**
+   * Ưu tiên tuyệt đối dữ liệu Câu hỏi (questions) từ Firebase Firestore:
+   * Ghi đè localStorage, đồng thời giữ lại ảnh minh họa cục bộ nếu câu hỏi trên Cloud lược bỏ ảnh >250KB.
+   */
+  public applyRemoteQuestionsFromFirestore(remoteQuestions: Question[]): void {
+    if (!Array.isArray(remoteQuestions) || remoteQuestions.length === 0) return;
+
+    const localQuestions = safeGetItem<Question[]>(KEYS.QUESTIONS, []);
+    const localMap = new Map(localQuestions.map((q) => [q.id, q]));
+
+    const merged = remoteQuestions.map((rq) => {
+      const localQ = localMap.get(rq.id) || SEED_QUESTION_MAP.get(rq.id);
+      const imageUrl = rq.imageUrl || localQ?.imageUrl;
+      const imageCaption = rq.imageCaption || localQ?.imageCaption;
+      return normalizeQuestionStructure({
+        ...rq,
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(imageCaption ? { imageCaption } : {}),
+      });
+    });
+
+    safeSetItem(KEYS.QUESTIONS, merged);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(KEYS.HAS_LOCAL_EDITS, 'true');
+      }
+    } catch {
+      // ignore
+    }
+
+    this.rebuildActiveExamPapersAndSessions();
+  }
+
+  /**
+   * Ưu tiên tuyệt đối dữ liệu Học sinh (students) từ Firebase Firestore,
+   * hợp nhất an toàn bảng điểm các kỳ thi đã nộp.
+   */
+  public applyRemoteStudentsFromFirestore(remoteStudents: Student[]): void {
+    if (!Array.isArray(remoteStudents) || remoteStudents.length === 0) return;
+
+    const localStudents = safeGetItem<Student[]>(KEYS.STUDENTS, []);
+    const localById = new Map(localStudents.map((s) => [s.id, s]));
+
+    const merged = remoteStudents.map((rs) => {
+      const localSt = localById.get(rs.id);
+      const combinedScores = {
+        ...(localSt?.examScores || {}),
+        ...(rs.examScores || {}),
+      };
+      const sorted = Object.values(combinedScores).sort((a, b) =>
+        String(b?.submittedAt || '').localeCompare(String(a?.submittedAt || ''))
+      );
+      const latest = sorted[0];
+      return {
+        ...rs,
+        examScores: combinedScores,
+        ...(latest
+          ? {
+              latestScore: latest.score,
+              latestExamId: latest.examId,
+              latestExamTitle: latest.examTitle,
+              latestSubmittedAt: latest.submittedAt,
+            }
+          : {}),
+      };
+    });
+
+    safeSetItem(KEYS.STUDENTS, merged);
+    const derivedClasses = Array.from(
+      new Set([...safeGetItem<string[]>(KEYS.CLASSES, SEED_CLASSES), ...merged.map((s) => s.className)])
+    )
+      .filter(Boolean)
+      .sort();
+    safeSetItem(KEYS.CLASSES, derivedClasses);
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(KEYS.HAS_LOCAL_EDITS, 'true');
+      }
+    } catch {
+      // ignore
+    }
+
+    this.rebuildActiveExamPapersAndSessions();
+  }
+
+  /**
+   * Hợp nhất thời gian thực toàn bộ các bài nộp độc lập (/submissions/${examId}_${studentCode})
+   * từ Firestore vào sessions và danh sách học sinh (bảng điểm của Giáo viên).
+   */
+  public mergeRemoteSubmissionsFromFirestore(
+    remoteSubmissions: FirestoreStudentSubmission[],
+    triggerRepoSync: boolean = false
+  ): boolean {
+    if (!Array.isArray(remoteSubmissions) || remoteSubmissions.length === 0) return false;
+
+    const students = this.getStudents();
+    const sessions = this.getSessions();
+    let changed = false;
+
+    for (const sub of remoteSubmissions) {
+      if (!sub || !sub.examId) continue;
+
+      // Tìm học sinh khớp theo ID hoặc theo (loginCode + className) hoặc loginCode
+      const matchedStudent =
+        students.find((s) => s.id === sub.studentId) ||
+        students.find(
+          (s) =>
+            s.loginCode.toLowerCase() === String(sub.studentCode || '').toLowerCase() &&
+            s.className.toUpperCase() === String(sub.className || '').toUpperCase()
+        ) ||
+        students.find(
+          (s) => s.loginCode.toLowerCase() === String(sub.studentCode || '').toLowerCase()
+        );
+
+      const resolvedStudentId = matchedStudent ? matchedStudent.id : sub.studentId;
+      const sessionKey = `${resolvedStudentId}_${sub.examId}`;
+      const existingSess = sessions[sessionKey];
+
+      const isModified =
+        !existingSess ||
+        existingSess.status !== 'da_nop_bai' ||
+        existingSess.score !== sub.score ||
+        existingSess.correctCount !== sub.correctCount ||
+        existingSess.submittedAt !== sub.submittedAt;
+
+      if (isModified) {
+        sessions[sessionKey] = {
+          ...(existingSess || {}),
+          id: existingSess?.id || sub.id || `sess_${resolvedStudentId}_${sub.examId}`,
+          examId: sub.examId,
+          studentId: resolvedStudentId,
+          paperCode: sub.paperCode || existingSess?.paperCode || 'MD701',
+          status: 'da_nop_bai',
+          timeRemainingSeconds: 0,
+          currentQuestionIndex: existingSess?.currentQuestionIndex || 0,
+          answers:
+            sub.answers && Object.keys(sub.answers).length > 0
+              ? sub.answers
+              : existingSess?.answers || {},
+          score: sub.score,
+          correctCount: sub.correctCount,
+          wrongCount: sub.wrongCount,
+          unansweredCount: sub.unansweredCount,
+          submittedAt: sub.submittedAt,
+          lastHeartbeat: sub.submittedAt,
+        };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      safeSetItem(KEYS.SESSIONS, sessions);
+      this.syncStudentScoresFromSessions(sessions, triggerRepoSync);
+    } else {
+      // Đảm bảo điểm số luôn được đồng bộ vào danh sách lớp ngay cả khi session đã tồn tại
+      const scoresUpdated = this.syncStudentScoresFromSessions(sessions, triggerRepoSync);
+      if (scoresUpdated) changed = true;
+    }
+
+    return changed;
   }
 
   // --- ACTIONS ---

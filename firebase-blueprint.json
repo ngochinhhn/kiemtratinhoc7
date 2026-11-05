@@ -431,6 +431,150 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "StudentSubmissionDocument": {
+      "title": "StudentSubmissionDocument",
+      "description": "Independent student exam submission document keyed by ${examId}_${studentCode}.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Submission document ID (${examId}_${studentCode}).",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Trusted owner ID (teacher_smarttest7).",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "examId": {
+          "type": "string",
+          "description": "Exam ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "examTitle": {
+          "type": "string",
+          "description": "Exam title.",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "studentId": {
+          "type": "string",
+          "description": "Internal student ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentCode": {
+          "type": "string",
+          "description": "Auto-generated student login code (e.g. nvan, ttmanh).",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Student full name.",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "className": {
+          "type": "string",
+          "description": "Student class name (e.g. 7A4).",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "paperCode": {
+          "type": "string",
+          "description": "Exam paper code (e.g. MD701).",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "score": {
+          "type": "number",
+          "description": "Exam score on 10-point scale."
+        },
+        "correctCount": {
+          "type": "number",
+          "description": "Number of correct answers."
+        },
+        "wrongCount": {
+          "type": "number",
+          "description": "Number of wrong answers."
+        },
+        "unansweredCount": {
+          "type": "number",
+          "description": "Number of unanswered questions."
+        },
+        "totalQuestions": {
+          "type": "number",
+          "description": "Total number of questions in the exam."
+        },
+        "durationSeconds": {
+          "type": "number",
+          "description": "Time spent taking the exam in seconds."
+        },
+        "timeRemainingSeconds": {
+          "type": "number",
+          "description": "Remaining time in seconds when submitted."
+        },
+        "submittedAt": {
+          "type": "string",
+          "description": "ISO timestamp when the student submitted the exam.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "description": "Submission status.",
+          "enum": ["dang_lam_bai", "da_nop_bai", "mat_ket_noi"],
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "answers": {
+          "type": "object",
+          "description": "Map of questionId to selected student answers."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "examId",
+        "examTitle",
+        "studentId",
+        "studentCode",
+        "fullName",
+        "className",
+        "paperCode",
+        "score",
+        "correctCount",
+        "wrongCount",
+        "unansweredCount",
+        "totalQuestions",
+        "durationSeconds",
+        "timeRemainingSeconds",
+        "submittedAt",
+        "status",
+        "answers",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -453,6 +597,10 @@
     "/exams/{examId}/sessions/{sessionId}": {
       "schema": { "$ref": "#/entities/ExamSessionDocument" },
       "description": "Student exam sessions belonging to a specific exam."
+    },
+    "/submissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/StudentSubmissionDocument" },
+      "description": "Independent student exam submissions keyed by ${examId}_${studentCode}."
     }
   }
 }

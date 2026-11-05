@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { AlertTriangle, RefreshCw, X } from 'lucide-react';
 import {
   Exam,
   Question,
@@ -22,8 +23,10 @@ import { LoginView } from './components/LoginView';
 import { HelpView } from './components/HelpView';
 import { getActiveRunningExam, getActiveRunningExams } from './utils/auth';
 import {
+  ensureStudentAnonymousAuth,
   signInTeacherWithGoogle,
   signOutFirebase,
+  subscribeAllFirestoreData,
   subscribeFirebaseAuth,
   syncAppDataToFirestore,
   syncSessionToFirestore,
@@ -99,13 +102,21 @@ export default function App() {
   );
   const [firebaseUserEmail, setFirebaseUserEmail] = useState<string | null>(null);
   const [lastFirestoreSyncAt, setLastFirestoreSyncAt] = useState<string | null>(null);
+  const [firestoreError, setFirestoreError] = useState<string | null>(null);
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // Đề thi đang chọn để giám sát / xem kết quả
   const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
 
-  // Đồng bộ lên Cloud Firestore nếu Giáo viên đã đăng nhập Google Firebase Auth
+  const isTeacherRef = useRef<boolean>(isAuthenticated && currentRole === 'giaovien');
+  const hasSeededEmptyFirestoreRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    isTeacherRef.current = isAuthenticated && currentRole === 'giaovien';
+  }, [isAuthenticated, currentRole]);
+
+  // Đồng bộ toàn bộ dữ liệu của Giáo viên lên Cloud Firestore (hiển thị lỗi chi tiết nếu thất bại)
   const syncTeacherDataToFirestore = async () => {
     const res = await syncAppDataToFirestore({
       questions: appStorage.getQuestions(),
@@ -113,33 +124,37 @@ export default function App() {
       exams: appStorage.getExams(),
       sessions: appStorage.getSessions(),
       config: appStorage.getConfig(),
+      onError: (errMsg) => setFirestoreError(errMsg),
     });
     if (res.ok && res.syncedAt) {
       setLastFirestoreSyncAt(res.syncedAt);
+      setFirestoreError(null);
+    } else if (!res.ok && res.error) {
+      setFirestoreError(res.error);
     }
     return res;
   };
 
-  // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/ (và Cloud Firestore nếu đã kết nối)
+  // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/ VÀ lên Cloud Firestore
   const syncTeacherDataToRepo = async () => {
     setIsSyncingData(true);
     try {
-      const res = await appStorage.flushRepoSyncBeforeLogout();
-      if (res.ok && res.updatedAt) {
-        setLastRepoSyncAt(res.updatedAt);
+      const [repoRes] = await Promise.all([
+        appStorage.flushRepoSyncBeforeLogout(),
+        syncTeacherDataToFirestore(),
+      ]);
+      if (repoRes.ok && repoRes.updatedAt) {
+        setLastRepoSyncAt(repoRes.updatedAt);
       } else {
         setLastRepoSyncAt(appStorage.getLastRepoSyncAt());
       }
-      if (firebaseUserEmail) {
-        void syncTeacherDataToFirestore();
-      }
-      return res;
+      return repoRes;
     } finally {
       setIsSyncingData(false);
     }
   };
 
-  // Nạp dữ liệu ban đầu
+  // Nạp dữ liệu từ bộ nhớ ứng dụng vào React state
   const reloadData = () => {
     appStorage.ensureInitialized();
     setQuestions(appStorage.getQuestions());
@@ -159,13 +174,80 @@ export default function App() {
     }
   };
 
+  // Khởi chạy ứng dụng: Lắng nghe dữ liệu thời gian thực (onSnapshot) từ Firebase Firestore
+  // ở CẢ chế độ Giáo viên và Học sinh đối với exams, questions, students và submissions.
   useEffect(() => {
     reloadData();
-    void syncTeacherDataToRepo();
-    const unsub = subscribeFirebaseAuth((user) => {
-      setFirebaseUserEmail(user?.email || null);
+
+    const unsubAuth = subscribeFirebaseAuth((user) => {
+      setFirebaseUserEmail(user && !user.isAnonymous ? user.email || null : null);
     });
-    return () => unsub();
+
+    const unsubFirestore = subscribeAllFirestoreData({
+      onExams: (remoteExams, isEmpty) => {
+        if (!isEmpty && remoteExams.length > 0) {
+          // Khi trên Firebase đã có dữ liệu, tuyệt đối ưu tiên hiển thị dữ liệu từ Firebase,
+          // ghi đè lên localStorage và bỏ qua dữ liệu cũ trong seedExams.ts
+          appStorage.applyRemoteExamsFromFirestore(remoteExams);
+          const updatedExams = appStorage.getExams();
+          setExams(updatedExams);
+          setPapers(appStorage.getPapers());
+          setSessions(appStorage.getSessions());
+          setConfig(appStorage.getConfig());
+          setLastFirestoreSyncAt(new Date().toISOString());
+          setFirestoreError(null);
+          setSelectedExamId((prev) => {
+            if (prev && updatedExams.some((e) => e.id === prev)) return prev;
+            const active = updatedExams.find((e) => e.status === 'dang_dien_ra') || updatedExams[0];
+            return active ? active.id : null;
+          });
+        } else if (
+          isEmpty &&
+          isTeacherRef.current &&
+          !hasSeededEmptyFirestoreRef.current
+        ) {
+          hasSeededEmptyFirestoreRef.current = true;
+          void syncTeacherDataToFirestore();
+        }
+      },
+      onQuestions: (remoteQuestions, isEmpty) => {
+        if (!isEmpty && remoteQuestions.length > 0) {
+          appStorage.applyRemoteQuestionsFromFirestore(remoteQuestions);
+          setQuestions(appStorage.getQuestions());
+          setPapers(appStorage.getPapers());
+          setLastFirestoreSyncAt(new Date().toISOString());
+        }
+      },
+      onStudents: (remoteStudents, isEmpty) => {
+        if (!isEmpty && remoteStudents.length > 0) {
+          appStorage.applyRemoteStudentsFromFirestore(remoteStudents);
+          setStudents(appStorage.getStudents());
+          setClasses(appStorage.getClasses());
+          setPapers(appStorage.getPapers());
+          setSessions(appStorage.getSessions());
+          setLastFirestoreSyncAt(new Date().toISOString());
+        }
+      },
+      onSubmissions: (remoteSubmissions) => {
+        if (remoteSubmissions.length > 0) {
+          appStorage.mergeRemoteSubmissionsFromFirestore(
+            remoteSubmissions,
+            isTeacherRef.current
+          );
+          setSessions(appStorage.getSessions());
+          setStudents(appStorage.getStudents());
+          setLastFirestoreSyncAt(new Date().toISOString());
+        }
+      },
+      onError: (errMsg) => {
+        setFirestoreError(errMsg);
+      },
+    });
+
+    return () => {
+      unsubAuth();
+      unsubFirestore();
+    };
   }, []);
 
   // Đảm bảo tự động lưu vào src/data/ trước khi Giáo viên đóng tab hoặc tải lại trang
@@ -180,18 +262,18 @@ export default function App() {
     };
   }, [isAuthenticated, currentRole]);
 
-  // Xử lý đăng nhập Giáo viên (Tự động đồng bộ dữ liệu ngay khi đăng nhập với vai trò Giáo viên)
+  // Xử lý đăng nhập Giáo viên
   const handleLoginTeacher = () => {
     if (typeof window !== 'undefined') {
       window.sessionStorage.removeItem(ACTIVE_STUDENT_STORAGE_KEY);
       window.sessionStorage.removeItem(ACTIVE_STUDENT_EXAM_ID_KEY);
     }
+    isTeacherRef.current = true;
     setCurrentRole('giaovien');
     setAuthenticatedStudent(null);
     setStudentChosenExamId(null);
     setActiveTab('tongquan');
     setIsAuthenticated(true);
-    void syncTeacherDataToRepo();
   };
 
   // Đăng nhập Giáo viên qua Google Firebase Auth
@@ -202,7 +284,7 @@ export default function App() {
     void syncTeacherDataToFirestore();
   };
 
-  // Xử lý đăng nhập Học sinh (kèm kỳ thi mà học sinh chọn tham dự)
+  // Xử lý đăng nhập Học sinh (kèm kỳ thi mà học sinh chọn tham dự & tự động xác thực ẩn danh Firebase)
   const handleLoginStudent = (student: Student, chosenExamId?: string) => {
     if (typeof window !== 'undefined') {
       try {
@@ -214,6 +296,8 @@ export default function App() {
         // ignore
       }
     }
+    void ensureStudentAnonymousAuth();
+    isTeacherRef.current = false;
     setCurrentRole('hocsinh');
     setAuthenticatedStudent(student);
     if (chosenExamId) {
@@ -367,9 +451,7 @@ export default function App() {
     if (session.status === 'da_nop_bai' && session.score !== undefined) {
       setStudents(appStorage.getStudents());
     }
-    if (firebaseUserEmail) {
-      void syncSessionToFirestore(session);
-    }
+    void syncSessionToFirestore(session);
   };
 
   // Cập nhật cấu hình hệ thống
@@ -447,6 +529,48 @@ export default function App() {
           isLoggingOut={isLoggingOut}
           lastRepoSyncAt={lastRepoSyncAt}
         />
+      )}
+
+      {/* BANNER HIỂN THỊ CHI TIẾT LỖI ĐỒNG BỘ FIREBASE FIRESTORE (NẾU BỊ CHẶN BỞI SECURITY RULES HOẶC LỖI MẠNG) */}
+      {firestoreError && (
+        <div
+          data-testid="firestore-error-banner"
+          className="bg-red-50 border-b border-red-300 text-red-900 px-4 py-3 text-xs shadow-xs"
+        >
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-start space-x-2.5">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-extrabold text-red-800">
+                  Cảnh báo lỗi đồng bộ Firebase Firestore:
+                </p>
+                <p className="font-mono text-[11px] text-red-700 break-all">
+                  {firestoreError}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
+              {currentRole === 'giaovien' && isAuthenticated && (
+                <button
+                  type="button"
+                  onClick={() => void syncTeacherDataToFirestore()}
+                  className="bg-red-700 hover:bg-red-800 text-white font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Thử ghi lại lên Firebase</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setFirestoreError(null)}
+                className="p-1.5 text-red-700 hover:bg-red-100 rounded-lg cursor-pointer"
+                title="Đóng thông báo"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Thân ứng dụng */}

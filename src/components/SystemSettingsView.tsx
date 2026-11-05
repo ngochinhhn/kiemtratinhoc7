@@ -246,8 +246,34 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {!firebaseUserEmail && onConnectFirebaseGoogle ? (
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {onSyncFirestoreCloud && (
+              <button
+                type="button"
+                data-testid="btn-sync-firestore-now"
+                disabled={isSyncingCloud}
+                onClick={async () => {
+                  setIsSyncingCloud(true);
+                  try {
+                    const res = await onSyncFirestoreCloud();
+                    if (res.ok) {
+                      showBanner('success', 'Đã đồng bộ dữ liệu lên Cloud Firestore thành công!');
+                    } else {
+                      showBanner('error', res.error || 'Không thể đồng bộ lên Cloud Firestore.');
+                    }
+                  } catch {
+                    showBanner('error', 'Có lỗi khi đồng bộ lên Cloud Firestore.');
+                  } finally {
+                    setIsSyncingCloud(false);
+                  }
+                }}
+                className="bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm flex items-center space-x-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+                <span>{isSyncingCloud ? 'Đang đồng bộ Cloud...' : 'Đồng bộ Cloud Firebase ngay'}</span>
+              </button>
+            )}
+            {!firebaseUserEmail && onConnectFirebaseGoogle && (
               <button
                 type="button"
                 data-testid="btn-connect-firebase-google"
@@ -259,38 +285,11 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
                     showBanner('error', 'Chưa hoàn tất xác thực Google với Firebase.');
                   }
                 }}
-                className="bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                className="bg-white hover:bg-blue-50 text-blue-700 border border-blue-300 font-bold text-xs px-3.5 py-2.5 rounded-xl shadow-2xs flex items-center space-x-1.5 cursor-pointer"
               >
                 <Database className="w-4 h-4" />
-                <span>Đăng nhập Google để đồng bộ Cloud</span>
+                <span>Liên kết Google</span>
               </button>
-            ) : (
-              onSyncFirestoreCloud && (
-                <button
-                  type="button"
-                  data-testid="btn-sync-firestore-now"
-                  disabled={isSyncingCloud}
-                  onClick={async () => {
-                    setIsSyncingCloud(true);
-                    try {
-                      const res = await onSyncFirestoreCloud();
-                      if (res.ok) {
-                        showBanner('success', 'Đã đồng bộ dữ liệu lên Cloud Firestore thành công!');
-                      } else {
-                        showBanner('error', res.error || 'Không thể đồng bộ lên Cloud Firestore.');
-                      }
-                    } catch {
-                      showBanner('error', 'Có lỗi khi đồng bộ lên Cloud Firestore.');
-                    } finally {
-                      setIsSyncingCloud(false);
-                    }
-                  }}
-                  className="bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm flex items-center space-x-1.5 cursor-pointer"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isSyncingCloud ? 'animate-spin' : ''}`} />
-                  <span>{isSyncingCloud ? 'Đang đồng bộ Cloud...' : 'Đồng bộ Cloud Firebase ngay'}</span>
-                </button>
-              )
             )}
           </div>
         </div>
@@ -299,7 +298,7 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
           <span className="font-semibold">
             {firebaseUserEmail
               ? `Tài khoản Google Cloud đã xác thực: ${firebaseUserEmail}`
-              : 'Trạng thái: Đang hoạt động với bộ nhớ chuẩn + Sẵn sàng kết nối Google Firebase Auth'}
+              : 'Trạng thái: Đang lắng nghe & đồng bộ thời gian thực trực tiếp với Firebase Firestore (onSnapshot)'}
           </span>
           {lastFirestoreSyncAt && (
             <span className="font-mono text-blue-800">

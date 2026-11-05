@@ -12,9 +12,14 @@ import {
   WifiOff,
   RotateCcw,
   Users,
+  RefreshCw,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Exam, Student, StudentAnswer, StudentExamPaper, StudentExamSession } from '../types';
+import {
+  ensureStudentAnonymousAuth,
+  submitStudentExamResultToFirestore,
+} from '../utils/firebaseSync';
 import { getDisplayQuestionsForStudent } from '../utils/examShuffler';
 import {
   gradeStudentExam,
@@ -97,6 +102,11 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string>('');
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmittingToCloud, setIsSubmittingToCloud] = useState(false);
+  const [submitCloudError, setSubmitCloudError] = useState<string | null>(null);
+  const [pendingSubmittedSession, setPendingSubmittedSession] =
+    useState<StudentExamSession | null>(null);
+  const [syncedSubmissionId, setSyncedSubmissionId] = useState<string | null>(null);
 
   // Trạng thái kết nối mạng và thông báo khôi phục trạng thái lúc thoát ra / mất mạng
   const [isOffline, setIsOffline] = useState<boolean>(
@@ -320,6 +330,7 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     if (initialStudent) {
       setLoggedInStudent(initialStudent);
       setSelectedClassInput(initialStudent.className);
+      void ensureStudentAnonymousAuth();
       syncStudentSessionOnEnter(initialStudent, activeExam);
     }
   }, [initialStudent?.id, activeExam?.id]);
@@ -403,6 +414,7 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
 
     setLoggedInStudent(res.student);
     setLoginError('');
+    void ensureStudentAnonymousAuth();
     syncStudentSessionOnEnter(res.student, activeExam);
   };
 
@@ -587,34 +599,35 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     return () => clearInterval(timer);
   }, [isTakingExam, isSubmitted]);
 
-  // Nộp bài thi
-  const handleSubmitExam = (_isAutoSubmit: boolean = false) => {
-    if (!currentSession || !currentPaper || !activeExam) return;
+  // Hàm đẩy kết quả bài thi của học sinh lên Firestore (hỗ trợ cả nộp lần đầu và gửi lại khi lỗi mạng / rules)
+  const pushStudentResultToCloud = async (sessionToPush: StudentExamSession) => {
+    if (!loggedInStudent || !activeExam) return;
 
-    const graded = gradeStudentExam(
-      answersRef.current,
-      currentPaper.questionSnapshots,
-      activeExam.maxScore
-    );
+    setIsSubmittingToCloud(true);
+    setSubmitCloudError(null);
 
-    const submittedSession: StudentExamSession = {
-      ...currentSession,
-      status: 'da_nop_bai',
-      submittedAt: new Date().toISOString(),
-      timeRemainingSeconds: 0,
-      currentQuestionIndex: currentQuestionIndexRef.current,
-      answers: answersRef.current,
-      score: graded.score,
-      correctCount: graded.correctCount,
-      wrongCount: graded.wrongCount,
-      unansweredCount: graded.unansweredCount,
-      lastHeartbeat: new Date().toISOString(),
-    };
+    const res = await submitStudentExamResultToFirestore({
+      student: loggedInStudent,
+      exam: activeExam,
+      session: sessionToPush,
+      totalQuestions: displayQuestions.length || activeExam.totalQuestions,
+    });
 
+    setIsSubmittingToCloud(false);
+
+    if (!res.ok) {
+      setSubmitCloudError(
+        res.error ||
+          'Không thể gửi điểm về máy chủ Firebase Firestore. Vui lòng kiểm tra kết nối mạng hoặc cấu hình Firestore Security Rules và bấm "Gửi lại kết quả lên hệ thống".'
+      );
+      setShowConfirmSubmit(true);
+      return;
+    }
+
+    setSyncedSubmissionId(res.submissionId);
+    setSubmitCloudError(null);
     isSubmittedRef.current = true;
     isTakingExamRef.current = false;
-    currentSessionRef.current = submittedSession;
-    onUpdateSession(submittedSession);
     setIsTakingExam(false);
     setIsSubmitted(true);
     setShowConfirmSubmit(false);
@@ -628,6 +641,39 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     } catch (_e) {
       // ignore
     }
+  };
+
+  // Nộp bài thi: Chấm điểm -> Lưu trạng thái bài nộp -> Chờ (await) đẩy Document độc lập lên Firestore
+  const handleSubmitExam = async (_isAutoSubmit: boolean = false) => {
+    if (!currentSession || !currentPaper || !activeExam || !loggedInStudent) return;
+
+    const graded = gradeStudentExam(
+      answersRef.current,
+      currentPaper.questionSnapshots,
+      activeExam.maxScore
+    );
+
+    const submittedSession: StudentExamSession = {
+      ...currentSession,
+      status: 'da_nop_bai',
+      submittedAt: new Date().toISOString(),
+      timeRemainingSeconds: secondsLeftRef.current,
+      currentQuestionIndex: currentQuestionIndexRef.current,
+      answers: answersRef.current,
+      score: graded.score,
+      correctCount: graded.correctCount,
+      wrongCount: graded.wrongCount,
+      unansweredCount: graded.unansweredCount,
+      lastHeartbeat: new Date().toISOString(),
+    };
+
+    isTakingExamRef.current = false;
+    currentSessionRef.current = submittedSession;
+    setPendingSubmittedSession(submittedSession);
+    onUpdateSession(submittedSession);
+    setShowConfirmSubmit(true);
+
+    await pushStudentResultToCloud(submittedSession);
   };
 
   // 1. MÀN HÌNH ĐĂNG NHẬP
@@ -823,12 +869,18 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
               <span className="text-slate-500">Bài kiểm tra:</span>
               <strong className="text-slate-800">{activeExam?.title}</strong>
             </div>
-            <div className="flex justify-between py-1">
+            <div className="flex justify-between py-1 border-b border-slate-200">
               <span className="text-slate-500">Thời điểm nộp:</span>
               <strong className="text-slate-800">
                 {finalSession?.submittedAt
                   ? new Date(finalSession.submittedAt).toLocaleTimeString('vi-VN')
                   : new Date().toLocaleTimeString('vi-VN')}
+              </strong>
+            </div>
+            <div className="flex justify-between py-1">
+              <span className="text-slate-500">Mã bản ghi hệ thống (Firestore):</span>
+              <strong className="text-emerald-700 font-mono">
+                {syncedSubmissionId || `${activeExam?.id}_${loggedInStudent.loginCode}`}
               </strong>
             </div>
           </div>
@@ -850,7 +902,33 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
             </div>
           )}
 
-          <div className="flex justify-center space-x-3 pt-2">
+          {submitCloudError && (
+            <div className="bg-red-50 border border-red-300 text-red-800 rounded-xl p-4 text-left text-xs space-y-2">
+              <p className="font-bold flex items-center space-x-1.5">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>Lỗi khi gửi điểm lên máy chủ Firebase Firestore:</span>
+              </p>
+              <p className="font-mono text-[11px] break-words">{submitCloudError}</p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap justify-center gap-3 pt-2">
+            {finalSession && (
+              <button
+                type="button"
+                data-testid="btn-resync-submitted-result"
+                disabled={isSubmittingToCloud}
+                onClick={() => void pushStudentResultToCloud(finalSession)}
+                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-xs px-4 py-2.5 rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSubmittingToCloud ? 'animate-spin' : ''}`} />
+                <span>
+                  {isSubmittingToCloud
+                    ? 'Đang gửi điểm về máy chủ...'
+                    : 'Gửi lại kết quả lên hệ thống'}
+                </span>
+              </button>
+            )}
             <button
               onClick={() => {
                 setLoggedInStudent(null);
@@ -1469,48 +1547,111 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
         )}
       </div>
 
-      {/* MODAL XÁC NHẬN NỘP BÀI */}
+      {/* MODAL XÁC NHẬN NỘP BÀI & TRẠNG THÁI ĐANG GỬI ĐIỂM / BÁO LỖI GỬI LẠI */}
       {showConfirmSubmit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto">
-                <AlertTriangle className="w-6 h-6" />
+            {isSubmittingToCloud ? (
+              <div
+                data-testid="student-submitting-cloud-state"
+                className="text-center py-6 space-y-3"
+              >
+                <div className="w-14 h-14 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center mx-auto">
+                  <RefreshCw className="w-7 h-7 animate-spin" />
+                </div>
+                <h3 className="font-extrabold text-lg text-slate-800">
+                  Đang gửi điểm về máy chủ...
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Hệ thống đang lưu kết quả bài thi của em ({loggedInStudent.fullName} - Lớp{' '}
+                  {loggedInStudent.className}) lên cơ sở dữ liệu đám mây Firebase Firestore. Vui lòng chờ giây lát...
+                </p>
               </div>
-              <h3 className="font-bold text-lg text-slate-800">Xác nhận nộp bài thi?</h3>
-              <p className="text-xs text-slate-600">
-                Em đã trả lời{' '}
-                <strong className="text-blue-700 font-bold">
-                  {answeredCount} / {displayQuestions.length}
-                </strong>{' '}
-                câu hỏi.
-              </p>
-            </div>
+            ) : submitCloudError ? (
+              <div
+                data-testid="student-submit-cloud-error-panel"
+                className="space-y-4"
+              >
+                <div className="text-center space-y-2">
+                  <div className="w-12 h-12 bg-red-100 text-red-700 rounded-full flex items-center justify-center mx-auto">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <h3 className="font-extrabold text-lg text-red-800">
+                    Chưa thể gửi điểm lên máy chủ!
+                  </h3>
+                  <p className="text-xs text-slate-600">
+                    Bài làm của em đã được chấm điểm và lưu an toàn trên máy (em <strong>không</strong> phải làm lại bài thi).
+                  </p>
+                </div>
 
-            {displayQuestions.length - answeredCount > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
-                <strong>Cảnh báo:</strong> Em vẫn còn{' '}
-                <strong>{displayQuestions.length - answeredCount}</strong> câu chưa chọn phương án.
-                Sau khi nộp, em sẽ không thể sửa lại bài làm.
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 text-xs text-red-800 space-y-1.5">
+                  <p className="font-bold">Chi tiết lỗi từ hệ thống:</p>
+                  <p className="font-mono text-[11px] break-words">{submitCloudError}</p>
+                </div>
+
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    type="button"
+                    data-testid="btn-retry-submit-firestore"
+                    onClick={() => {
+                      const sessionToRetry =
+                        pendingSubmittedSession || currentSessionRef.current;
+                      if (sessionToRetry) {
+                        void pushStudentResultToCloud(sessionToRetry);
+                      } else {
+                        void handleSubmitExam(false);
+                      }
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold py-3 px-4 rounded-xl shadow-md flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>Gửi lại kết quả lên hệ thống</span>
+                  </button>
+                </div>
               </div>
+            ) : (
+              <>
+                <div className="text-center space-y-2">
+                  <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <h3 className="font-bold text-lg text-slate-800">Xác nhận nộp bài thi?</h3>
+                  <p className="text-xs text-slate-600">
+                    Em đã trả lời{' '}
+                    <strong className="text-blue-700 font-bold">
+                      {answeredCount} / {displayQuestions.length}
+                    </strong>{' '}
+                    câu hỏi.
+                  </p>
+                </div>
+
+                {displayQuestions.length - answeredCount > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
+                    <strong>Cảnh báo:</strong> Em vẫn còn{' '}
+                    <strong>{displayQuestions.length - answeredCount}</strong> câu chưa chọn phương án.
+                    Sau khi nộp, em sẽ không thể sửa lại bài làm.
+                  </div>
+                )}
+
+                <div className="flex space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmSubmit(false)}
+                    className="flex-1 py-2.5 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-50 cursor-pointer"
+                  >
+                    Kiểm tra lại
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="btn-confirm-submit-exam"
+                    onClick={() => void handleSubmitExam(false)}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 rounded-xl shadow-md cursor-pointer"
+                  >
+                    Xác nhận nộp bài
+                  </button>
+                </div>
+              </>
             )}
-
-            <div className="flex space-x-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowConfirmSubmit(false)}
-                className="flex-1 py-2.5 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-50 cursor-pointer"
-              >
-                Kiểm tra lại
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSubmitExam(false)}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 rounded-xl shadow-md cursor-pointer"
-              >
-                Xác nhận nộp bài
-              </button>
-            </div>
           </div>
         </div>
       )}

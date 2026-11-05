@@ -59,6 +59,7 @@ declare module 'firebase/auth' {
 
   export function getAuth(app?: FirebaseApp): Auth;
   export function signInWithPopup(auth: Auth, provider: GoogleAuthProvider): Promise<UserCredential>;
+  export function signInAnonymously(auth: Auth): Promise<UserCredential>;
   export function signOut(auth: Auth): Promise<void>;
   export function onAuthStateChanged(
     auth: Auth,
@@ -142,7 +143,9 @@ declare module 'firebase/firestore' {
   export function getDocFromServer<T = DocumentData>(reference: DocumentReference<T>): Promise<DocumentSnapshot<T>>;
   export function getDocs<T = DocumentData>(query: Query<T> | CollectionReference<T>): Promise<QuerySnapshot<T>>;
   export function setDoc<T = DocumentData>(reference: DocumentReference<T>, data: T): Promise<void>;
+  export function addDoc<T = DocumentData>(reference: CollectionReference<T>, data: T): Promise<DocumentReference<T>>;
   export function updateDoc<T = DocumentData>(reference: DocumentReference<T>, data: Partial<T> | Record<string, any>): Promise<void>;
+  export function deleteDoc<T = DocumentData>(reference: DocumentReference<T>): Promise<void>;
   export function serverTimestamp(): FieldValue;
   export function where(fieldPath: string, opStr: WhereFilterOp, value: unknown): QueryConstraint;
   export function query<T = DocumentData>(query: Query<T> | CollectionReference<T>, ...queryConstraints: QueryConstraint[]): Query<T>;

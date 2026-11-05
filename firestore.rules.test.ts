@@ -27,12 +27,14 @@ describe('Firestore Security Rules & Blueprint TDD Verification', () => {
     assert.ok(paths.includes('/students/{studentId}'));
     assert.ok(paths.includes('/exams/{examId}'));
     assert.ok(paths.includes('/exams/{examId}/sessions/{sessionId}'));
+    assert.ok(paths.includes('/submissions/{submissionId}'));
 
     assert.ok(rulesText.includes('match /admins/{adminId}'));
     assert.ok(rulesText.includes('match /questions/{questionId}'));
     assert.ok(rulesText.includes('match /students/{studentId}'));
     assert.ok(rulesText.includes('match /exams/{examId}'));
     assert.ok(rulesText.includes('match /sessions/{sessionId}'));
+    assert.ok(rulesText.includes('match /submissions/{submissionId}'));
   });
 
   it('rejects Dirty Dozen payloads via structural and relational rule gates', () => {

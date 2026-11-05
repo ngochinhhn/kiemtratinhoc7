@@ -188,6 +188,45 @@ service cloud.firestore {
              data.updatedAt is timestamp;
     }
 
+    function isValidStudentSubmissionDocument(data) {
+      return data.keys().hasAll([
+               'id', 'ownerId', 'examId', 'examTitle', 'studentId', 'studentCode',
+               'fullName', 'className', 'paperCode', 'score', 'correctCount',
+               'wrongCount', 'unansweredCount', 'totalQuestions', 'durationSeconds',
+               'timeRemainingSeconds', 'submittedAt', 'status', 'answers',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'ownerId', 'examId', 'examTitle', 'studentId', 'studentCode',
+               'fullName', 'className', 'paperCode', 'score', 'correctCount',
+               'wrongCount', 'unansweredCount', 'totalQuestions', 'durationSeconds',
+               'timeRemainingSeconds', 'submittedAt', 'status', 'answers',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+             isTrustedOwnerId(data.ownerId) &&
+             data.examId is string && data.examId.size() >= 1 && data.examId.size() <= 128 && data.examId.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.examTitle is string && data.examTitle.size() >= 1 && data.examTitle.size() <= 300 &&
+             data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 128 && data.studentId.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.studentCode is string && data.studentCode.size() >= 1 && data.studentCode.size() <= 64 && data.studentCode.matches('^[a-zA-Z0-9_\\-]+$') &&
+             data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 150 &&
+             data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+             data.paperCode is string && data.paperCode.size() >= 1 && data.paperCode.size() <= 32 &&
+             (data.score is int || data.score is float) && data.score >= 0 && data.score <= 100 &&
+             data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 100 &&
+             data.wrongCount is int && data.wrongCount >= 0 && data.wrongCount <= 100 &&
+             data.unansweredCount is int && data.unansweredCount >= 0 && data.unansweredCount <= 100 &&
+             data.totalQuestions is int && data.totalQuestions >= 1 && data.totalQuestions <= 100 &&
+             data.durationSeconds is int && data.durationSeconds >= 0 && data.durationSeconds <= 86400 &&
+             data.timeRemainingSeconds is int && data.timeRemainingSeconds >= 0 && data.timeRemainingSeconds <= 86400 &&
+             data.submittedAt is string && data.submittedAt.size() >= 1 && data.submittedAt.size() <= 64 &&
+             data.status is string && data.status.size() >= 4 && data.status.size() <= 32 &&
+             (data.status == 'dang_lam_bai' || data.status == 'da_nop_bai' || data.status == 'mat_ket_noi') &&
+             data.answers is map && data.answers.keys().size() <= 100 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // 3. COLLECTION RULES
     // =========================================================================
@@ -235,14 +274,8 @@ service cloud.firestore {
                        isValidQuestionItem(incoming()) &&
                        incoming().id == existing().id &&
                        incoming().ownerId == existing().ownerId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().updatedAt == request.time && (
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'questionType', 'themeId', 'themeName', 'lessonId', 'lessonName',
-                           'content', 'cognitiveLevel', 'reviewStatus', 'payloadMap', 'updatedAt'
-                         ]) ||
-                         isAdmin()
-                       );
+                       (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
+                       incoming().updatedAt == request.time;
 
       allow delete: if isValidId(questionId) && isTrustedOwnerId(existing().ownerId);
     }
@@ -262,14 +295,8 @@ service cloud.firestore {
                        isValidStudentRecord(incoming()) &&
                        incoming().id == existing().id &&
                        incoming().ownerId == existing().ownerId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().updatedAt == request.time && (
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'fullName', 'normalizedName', 'loginCode', 'className',
-                           'latestScore', 'latestExamTitle', 'examScores', 'payloadMap', 'updatedAt'
-                         ]) ||
-                         isAdmin()
-                       );
+                       (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
+                       incoming().updatedAt == request.time;
 
       allow delete: if isValidId(studentId) && isTrustedOwnerId(existing().ownerId);
     }
@@ -289,16 +316,8 @@ service cloud.firestore {
                        isValidExamDocument(incoming()) &&
                        incoming().id == existing().id &&
                        incoming().ownerId == existing().ownerId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().updatedAt == request.time && (
-                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'title', 'examType', 'status', 'durationMinutes', 'totalQuestions',
-                           'maxScore', 'classes', 'questionIds', 'allowReviewAfterSubmit',
-                           'shuffleQuestions', 'shuffleOptions', 'payloadMap', 'updatedAt'
-                         ]) ||
-                         isAdmin()
-                       );
+                       (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
+                       incoming().updatedAt == request.time;
 
       allow delete: if isValidId(examId) && isTrustedOwnerId(existing().ownerId);
 
@@ -326,22 +345,36 @@ service cloud.firestore {
                          incoming().examId == existing().examId &&
                          incoming().studentId == existing().studentId &&
                          incoming().ownerId == existing().ownerId &&
-                         incoming().createdAt == existing().createdAt &&
+                         (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
                          incoming().updatedAt == request.time &&
-                         exists(/databases/$(database)/documents/exams/$(examId)) && (
-                           incoming().diff(existing()).affectedKeys().hasOnly([
-                             'status', 'timeRemainingSeconds', 'currentQuestionIndex',
-                             'score', 'correctCount', 'wrongCount', 'unansweredCount',
-                             'answers', 'updatedAt'
-                           ]) ||
-                           isAdmin()
-                         );
+                         exists(/databases/$(database)/documents/exams/$(examId));
 
         allow delete: if isValidId(examId) &&
                          isValidId(sessionId) &&
                          exists(/databases/$(database)/documents/exams/$(examId)) &&
                          isTrustedOwnerId(existing().ownerId);
       }
+    }
+
+    // --- /submissions/{submissionId} ---
+    match /submissions/{submissionId} {
+      allow get: if isValidId(submissionId) && isTrustedOwnerId(existing().ownerId);
+      allow list: if isTrustedOwnerId(resource.data.ownerId);
+
+      allow create: if isValidId(submissionId) &&
+                       incoming().id == submissionId &&
+                       isValidStudentSubmissionDocument(incoming()) &&
+                       incoming().createdAt == request.time &&
+                       incoming().updatedAt == request.time;
+
+      allow update: if isValidId(submissionId) &&
+                       isValidStudentSubmissionDocument(incoming()) &&
+                       incoming().id == existing().id &&
+                       incoming().ownerId == existing().ownerId &&
+                       (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
+                       incoming().updatedAt == request.time;
+
+      allow delete: if isValidId(submissionId) && isTrustedOwnerId(existing().ownerId);
     }
   }
 }
