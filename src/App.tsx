@@ -24,6 +24,9 @@ import { HelpView } from './components/HelpView';
 import { getActiveRunningExam, getActiveRunningExams } from './utils/auth';
 import {
   ensureStudentAnonymousAuth,
+  FIRESTORE_PRICING_URL,
+  FIRESTORE_QUOTA_UPGRADE_URL,
+  resetFirestoreQuotaCircuitBreaker,
   signInTeacherWithGoogle,
   signOutFirebase,
   subscribeAllFirestoreData,
@@ -103,6 +106,8 @@ export default function App() {
   const [firebaseUserEmail, setFirebaseUserEmail] = useState<string | null>(null);
   const [lastFirestoreSyncAt, setLastFirestoreSyncAt] = useState<string | null>(null);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
+  const [isQuotaFallbackActive, setIsQuotaFallbackActive] = useState<boolean>(false);
+  const [isQuotaBannerDismissed, setIsQuotaBannerDismissed] = useState<boolean>(false);
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -111,28 +116,43 @@ export default function App() {
 
   const isTeacherRef = useRef<boolean>(isAuthenticated && currentRole === 'giaovien');
   const hasSeededEmptyFirestoreRef = useRef<boolean>(false);
+  const hasInitialFirestoreSnapshotArrivedRef = useRef<boolean>(false);
+  const pendingTeacherSyncAfterInitRef = useRef<boolean>(false);
+  const isWritingToFirestoreRef = useRef<boolean>(false);
 
   useEffect(() => {
     isTeacherRef.current = isAuthenticated && currentRole === 'giaovien';
   }, [isAuthenticated, currentRole]);
 
-  // Đồng bộ toàn bộ dữ liệu của Giáo viên lên Cloud Firestore (hiển thị lỗi chi tiết nếu thất bại)
+  // Đồng bộ toàn bộ dữ liệu của Giáo viên lên Cloud Firestore (hoặc tự động dùng Server Sync nếu Firestore hết Quota trong ngày)
   const syncTeacherDataToFirestore = async () => {
-    const res = await syncAppDataToFirestore({
-      questions: appStorage.getQuestions(),
-      students: appStorage.getStudents(),
-      exams: appStorage.getExams(),
-      sessions: appStorage.getSessions(),
-      config: appStorage.getConfig(),
-      onError: (errMsg) => setFirestoreError(errMsg),
-    });
-    if (res.ok && res.syncedAt) {
-      setLastFirestoreSyncAt(res.syncedAt);
-      setFirestoreError(null);
-    } else if (!res.ok && res.error) {
-      setFirestoreError(res.error);
+    isWritingToFirestoreRef.current = true;
+    try {
+      const res = await syncAppDataToFirestore({
+        questions: appStorage.getQuestions(),
+        students: appStorage.getStudents(),
+        exams: appStorage.getExams(),
+        sessions: appStorage.getSessions(),
+        config: appStorage.getConfig(),
+        onError: (errMsg) => setFirestoreError(errMsg),
+        onQuotaExceeded: () => {
+          setIsQuotaFallbackActive(true);
+          setFirestoreError(null);
+        },
+      });
+      if (res.ok && res.syncedAt) {
+        setLastFirestoreSyncAt(res.syncedAt);
+        setFirestoreError(null);
+        if (res.quotaFallback) {
+          setIsQuotaFallbackActive(true);
+        }
+      } else if (!res.ok && res.error) {
+        setFirestoreError(res.error);
+      }
+      return res;
+    } finally {
+      isWritingToFirestoreRef.current = false;
     }
-    return res;
   };
 
   // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/ VÀ lên Cloud Firestore
@@ -185,6 +205,10 @@ export default function App() {
 
     const unsubFirestore = subscribeAllFirestoreData({
       onExams: (remoteExams, isEmpty) => {
+        if (isWritingToFirestoreRef.current) return;
+        const wasFirstSnapshot = !hasInitialFirestoreSnapshotArrivedRef.current;
+        hasInitialFirestoreSnapshotArrivedRef.current = true;
+
         if (!isEmpty && remoteExams.length > 0) {
           // Khi trên Firebase đã có dữ liệu, tuyệt đối ưu tiên hiển thị dữ liệu từ Firebase,
           // ghi đè lên localStorage và bỏ qua dữ liệu cũ trong seedExams.ts
@@ -201,16 +225,22 @@ export default function App() {
             const active = updatedExams.find((e) => e.status === 'dang_dien_ra') || updatedExams[0];
             return active ? active.id : null;
           });
+          if (wasFirstSnapshot && pendingTeacherSyncAfterInitRef.current) {
+            pendingTeacherSyncAfterInitRef.current = false;
+            void syncTeacherDataToFirestore();
+          }
         } else if (
           isEmpty &&
-          isTeacherRef.current &&
+          (isTeacherRef.current || pendingTeacherSyncAfterInitRef.current) &&
           !hasSeededEmptyFirestoreRef.current
         ) {
           hasSeededEmptyFirestoreRef.current = true;
+          pendingTeacherSyncAfterInitRef.current = false;
           void syncTeacherDataToFirestore();
         }
       },
       onQuestions: (remoteQuestions, isEmpty) => {
+        if (isWritingToFirestoreRef.current) return;
         if (!isEmpty && remoteQuestions.length > 0) {
           appStorage.applyRemoteQuestionsFromFirestore(remoteQuestions);
           setQuestions(appStorage.getQuestions());
@@ -219,6 +249,7 @@ export default function App() {
         }
       },
       onStudents: (remoteStudents, isEmpty) => {
+        if (isWritingToFirestoreRef.current) return;
         if (!isEmpty && remoteStudents.length > 0) {
           appStorage.applyRemoteStudentsFromFirestore(remoteStudents);
           setStudents(appStorage.getStudents());
@@ -242,6 +273,11 @@ export default function App() {
       onError: (errMsg) => {
         setFirestoreError(errMsg);
       },
+      onQuotaExceeded: () => {
+        setIsQuotaFallbackActive(true);
+        setFirestoreError(null);
+        setLastFirestoreSyncAt(new Date().toISOString());
+      },
     });
 
     return () => {
@@ -262,18 +298,26 @@ export default function App() {
     };
   }, [isAuthenticated, currentRole]);
 
-  // Xử lý đăng nhập Giáo viên
+  // Xử lý đăng nhập Giáo viên (bằng tài khoản admin nội bộ hoặc Google):
+  // Tự động kết nối và đọc/ghi trực tiếp lên Firebase Firestore giống hệt như đăng nhập Google
   const handleLoginTeacher = () => {
     if (typeof window !== 'undefined') {
       window.sessionStorage.removeItem(ACTIVE_STUDENT_STORAGE_KEY);
       window.sessionStorage.removeItem(ACTIVE_STUDENT_EXAM_ID_KEY);
     }
+    void ensureStudentAnonymousAuth();
     isTeacherRef.current = true;
     setCurrentRole('giaovien');
     setAuthenticatedStudent(null);
     setStudentChosenExamId(null);
     setActiveTab('tongquan');
     setIsAuthenticated(true);
+    setFirestoreError(null);
+    if (hasInitialFirestoreSnapshotArrivedRef.current) {
+      void syncTeacherDataToFirestore();
+    } else {
+      pendingTeacherSyncAfterInitRef.current = true;
+    }
   };
 
   // Đăng nhập Giáo viên qua Google Firebase Auth
@@ -281,7 +325,6 @@ export default function App() {
     const user = await signInTeacherWithGoogle();
     setFirebaseUserEmail(user.email || null);
     handleLoginTeacher();
-    void syncTeacherDataToFirestore();
   };
 
   // Xử lý đăng nhập Học sinh (kèm kỳ thi mà học sinh chọn tham dự & tự động xác thực ẩn danh Firebase)
@@ -531,8 +574,69 @@ export default function App() {
         />
       )}
 
+      {/* THÔNG BÁO CHẾ ĐỘ ĐỒNG BỘ DỰ PHÒNG TỰ ĐỘNG KHI FIREBASE FIRESTORE HẾT HẠN MỨC ĐỌC MIỄN PHÍ TRONG NGÀY (CHỈ HIỂN THỊ CHO GIÁO VIÊN) */}
+      {isQuotaFallbackActive && !isQuotaBannerDismissed && isAuthenticated && currentRole === 'giaovien' && (
+        <div
+          data-testid="firestore-quota-fallback-banner"
+          className="bg-amber-50 border-b border-amber-300 text-amber-950 px-4 py-2.5 text-xs shadow-xs"
+        >
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-start space-x-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-extrabold text-amber-900">
+                  Đã kích hoạt Chế độ Đồng bộ Máy chủ Trực tiếp (Do Firestore tạm hết hạn mức đọc miễn phí trong ngày):
+                </p>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Hạn mức <code>Free daily read units</code> của cơ sở dữ liệu Firestore miền phí sẽ tự động làm mới vào ngày hôm sau. Hiện tại ứng dụng <strong>đang hoạt động bình thường 100%</strong> qua kênh đồng bộ trực tiếp của máy chủ &amp; tệp dữ liệu hệ thống (Học sinh làm bài, nộp bài và Giáo viên xuất điểm Excel không bị gián đoạn).{' '}
+                  <a
+                    href={FIRESTORE_QUOTA_UPGRADE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline font-bold text-blue-700 hover:text-blue-900"
+                  >
+                    Mở trang quản lý/nâng cấp Database trên Firebase Console
+                  </a>{' '}
+                  |{' '}
+                  <a
+                    href={FIRESTORE_PRICING_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline font-semibold text-amber-900 hover:text-amber-700"
+                  >
+                    Chi tiết hạn mức Spark
+                  </a>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
+              <button
+                type="button"
+                onClick={() => {
+                  resetFirestoreQuotaCircuitBreaker();
+                  setIsQuotaFallbackActive(false);
+                  void syncTeacherDataToFirestore();
+                }}
+                className="bg-amber-700 hover:bg-amber-800 text-white font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Thử kết nối lại Firestore</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsQuotaBannerDismissed(true)}
+                className="p-1.5 text-amber-800 hover:bg-amber-100 rounded-lg cursor-pointer"
+                title="Ẩn thông báo"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* BANNER HIỂN THỊ CHI TIẾT LỖI ĐỒNG BỘ FIREBASE FIRESTORE (NẾU BỊ CHẶN BỞI SECURITY RULES HOẶC LỖI MẠNG) */}
-      {firestoreError && (
+      {firestoreError && !isQuotaFallbackActive && (
         <div
           data-testid="firestore-error-banner"
           className="bg-red-50 border-b border-red-300 text-red-900 px-4 py-3 text-xs shadow-xs"

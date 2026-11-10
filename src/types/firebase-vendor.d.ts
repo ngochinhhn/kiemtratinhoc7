@@ -142,7 +142,11 @@ declare module 'firebase/firestore' {
   export function getDoc<T = DocumentData>(reference: DocumentReference<T>): Promise<DocumentSnapshot<T>>;
   export function getDocFromServer<T = DocumentData>(reference: DocumentReference<T>): Promise<DocumentSnapshot<T>>;
   export function getDocs<T = DocumentData>(query: Query<T> | CollectionReference<T>): Promise<QuerySnapshot<T>>;
-  export function setDoc<T = DocumentData>(reference: DocumentReference<T>, data: T): Promise<void>;
+  export function setDoc<T = DocumentData>(
+    reference: DocumentReference<T>,
+    data: Partial<T> | T,
+    options?: { merge?: boolean }
+  ): Promise<void>;
   export function addDoc<T = DocumentData>(reference: CollectionReference<T>, data: T): Promise<DocumentReference<T>>;
   export function updateDoc<T = DocumentData>(reference: DocumentReference<T>, data: Partial<T> | Record<string, any>): Promise<void>;
   export function deleteDoc<T = DocumentData>(reference: DocumentReference<T>): Promise<void>;

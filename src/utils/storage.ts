@@ -1013,24 +1013,39 @@ export class AppStorage {
 
   /**
    * Ưu tiên tuyệt đối dữ liệu Câu hỏi (questions) từ Firebase Firestore:
-   * Ghi đè localStorage, đồng thời giữ lại ảnh minh họa cục bộ nếu câu hỏi trên Cloud lược bỏ ảnh >250KB.
+   * Ghi đè localStorage, đồng thời giữ lại ảnh minh họa cục bộ và bảo toàn các câu hỏi thủ công (manual_...) vừa thêm chưa kịp đẩy lên Cloud.
    */
   public applyRemoteQuestionsFromFirestore(remoteQuestions: Question[]): void {
     if (!Array.isArray(remoteQuestions) || remoteQuestions.length === 0) return;
 
+    const deletedIds = this.getDeletedQuestionIds();
     const localQuestions = safeGetItem<Question[]>(KEYS.QUESTIONS, []);
     const localMap = new Map(localQuestions.map((q) => [q.id, q]));
+    const remoteIdSet = new Set(remoteQuestions.map((rq) => rq.id));
 
-    const merged = remoteQuestions.map((rq) => {
-      const localQ = localMap.get(rq.id) || SEED_QUESTION_MAP.get(rq.id);
-      const imageUrl = rq.imageUrl || localQ?.imageUrl;
-      const imageCaption = rq.imageCaption || localQ?.imageCaption;
-      return normalizeQuestionStructure({
-        ...rq,
-        ...(imageUrl ? { imageUrl } : {}),
-        ...(imageCaption ? { imageCaption } : {}),
+    const merged = remoteQuestions
+      .filter((rq) => !deletedIds.has(rq.id))
+      .map((rq) => {
+        const localQ = localMap.get(rq.id) || SEED_QUESTION_MAP.get(rq.id);
+        const imageUrl = rq.imageUrl || localQ?.imageUrl;
+        const imageCaption = rq.imageCaption || localQ?.imageCaption;
+        return normalizeQuestionStructure({
+          ...rq,
+          ...(imageUrl ? { imageUrl } : {}),
+          ...(imageCaption ? { imageCaption } : {}),
+        });
       });
-    });
+
+    // Giữ lại các câu hỏi do giáo viên tự thêm (manual_...) ở máy hiện tại nếu chưa kịp đồng bộ lên Cloud
+    for (const lq of localQuestions) {
+      if (
+        lq.id.startsWith('manual_') &&
+        !remoteIdSet.has(lq.id) &&
+        !deletedIds.has(lq.id)
+      ) {
+        merged.push(normalizeQuestionStructure(lq));
+      }
+    }
 
     safeSetItem(KEYS.QUESTIONS, merged);
     try {

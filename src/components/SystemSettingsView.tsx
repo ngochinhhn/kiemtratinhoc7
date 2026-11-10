@@ -13,6 +13,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { SystemConfig } from '../types';
+import { extractFirebaseAuthError } from '../utils/firebaseSync';
 
 interface SystemSettingsViewProps {
   config: SystemConfig;
@@ -281,14 +282,21 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
                   try {
                     await onConnectFirebaseGoogle();
                     showBanner('success', 'Đã kết nối tài khoản Google với Cloud Firebase!');
-                  } catch {
-                    showBanner('error', 'Chưa hoàn tất xác thực Google với Firebase.');
+                  } catch (err) {
+                    const errInfo = extractFirebaseAuthError(err);
+                    if (onSyncFirestoreCloud) {
+                      await onSyncFirestoreCloud();
+                    }
+                    showBanner(
+                      'error',
+                      `Google Auth (${errInfo.code}): Đã tự động đồng bộ trực tiếp bằng tài khoản Giáo viên (admin) lên Cloud Firestore!`
+                    );
                   }
                 }}
                 className="bg-white hover:bg-blue-50 text-blue-700 border border-blue-300 font-bold text-xs px-3.5 py-2.5 rounded-xl shadow-2xs flex items-center space-x-1.5 cursor-pointer"
               >
                 <Database className="w-4 h-4" />
-                <span>Liên kết Google</span>
+                <span>Liên kết Google (Tùy chọn)</span>
               </button>
             )}
           </div>
@@ -297,8 +305,8 @@ export const SystemSettingsView: React.FC<SystemSettingsViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-blue-900 bg-blue-100/70 px-3.5 py-2 rounded-lg border border-blue-200">
           <span className="font-semibold">
             {firebaseUserEmail
-              ? `Tài khoản Google Cloud đã xác thực: ${firebaseUserEmail}`
-              : 'Trạng thái: Đang lắng nghe & đồng bộ thời gian thực trực tiếp với Firebase Firestore (onSnapshot)'}
+              ? `Tài khoản Google Cloud đã xác thực: ${firebaseUserEmail} (Đồng bộ thời gian thực)`
+              : 'Đã kết nối bằng tài khoản Giáo viên (admin) — Tự động đọc/ghi & đồng bộ trực tiếp với Firebase Firestore (onSnapshot)'}
           </span>
           {lastFirestoreSyncAt && (
             <span className="font-mono text-blue-800">

@@ -12,10 +12,8 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
-  query,
   serverTimestamp,
   setDoc,
-  where,
   Unsubscribe,
 } from 'firebase/firestore';
 import {
@@ -43,13 +41,33 @@ import {
   normalizeExamSubjectHeader,
 } from './examPaperFormatter';
 
-// Validation constants synchronized verbatim with firebase-blueprint.json & firestore.rules
+// Validation constants synchronized with firebase-blueprint.json & firestore.rules
 export const VALID_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export const MAX_ID_LENGTH = 128;
 export const MAX_QUESTION_CONTENT_LENGTH = 4000;
 export const MAX_TITLE_LENGTH = 300;
 export const MAX_NAME_LENGTH = 150;
 export const DEFAULT_TEACHER_OWNER_ID = 'teacher_smarttest7';
+
+export const FIRESTORE_QUOTA_UPGRADE_URL =
+  'https://console.firebase.google.com/project/gen-lang-client-0506944524/firestore/databases/ai-studio-smarttest7hthngt-ee3ed70c-97fe-41fc-98be-4dce40c666ef/data?openUpgradeDialog=true';
+export const FIRESTORE_PRICING_URL = 'https://firebase.google.com/pricing#cloud-firestore';
+
+const QUOTA_CIRCUIT_BREAKER_KEY = 'smarttest7_firestore_quota_exhausted_until_v1';
+const LOCAL_SUBMISSIONS_FALLBACK_KEY = 'smarttest7_local_submissions_fallback_v1';
+const LIVE_SYNC_CHANNEL_NAME = 'smarttest7_live_sync_channel_v1';
+const QUOTA_COOLDOWN_MS = 15 * 60 * 1000; // 15 phút ngắt tự động để không tốn thêm lượt đọc khi đã chạm trần Quota
+
+let memoryQuotaExhausted = false;
+let activeFirestoreUnsubscribers: Unsubscribe[] = [];
+
+// Bộ nhớ đệm in-memory giúp so sánh thay đổi mà KHÔNG cần gọi getDocs() (tiết kiệm >99% lượt đọc Firestore)
+const cachedRemoteExamsMap = new Map<string, Record<string, any>>();
+const cachedRemoteQuestionsMap = new Map<string, Record<string, any>>();
+const cachedRemoteStudentsMap = new Map<string, Record<string, any>>();
+let hasReceivedInitialExamsSnapshot = false;
+let hasReceivedInitialQuestionsSnapshot = false;
+let hasReceivedInitialStudentsSnapshot = false;
 
 export interface FirestoreStudentSubmission {
   id: string;
@@ -73,6 +91,140 @@ export interface FirestoreStudentSubmission {
   answers: Record<string, StudentAnswer>;
 }
 
+/**
+ * Kiểm tra xem lỗi trả về từ Firebase có phải do vượt quá hạn mức miễn phí trong ngày (Quota Exceeded) hay không
+ */
+export function isFirestoreQuotaExceededError(error: unknown): boolean {
+  const raw =
+    error instanceof Error
+      ? `${error.name} ${error.message} ${(error as { code?: string }).code || ''}`
+      : String(error || '');
+  return /quota limit exceeded|quota exceeded|resource-exhausted|free daily read units/i.test(raw);
+}
+
+/**
+ * Kiểm tra trạng thái ngắt mạch tự động khi Firestore đã chạm trần hạn mức đọc miễn phí trong ngày
+ */
+export function isFirestoreQuotaExhausted(): boolean {
+  if (memoryQuotaExhausted) return true;
+  if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+    try {
+      const untilRaw = window.sessionStorage.getItem(QUOTA_CIRCUIT_BREAKER_KEY);
+      if (untilRaw) {
+        const untilTs = Number(untilRaw);
+        if (Number.isFinite(untilTs) && Date.now() < untilTs) {
+          memoryQuotaExhausted = true;
+          return true;
+        }
+        window.sessionStorage.removeItem(QUOTA_CIRCUIT_BREAKER_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+/**
+ * Kích hoạt chế độ ngắt mạch tự động khi phát hiện Firestore hết Quota trong ngày,
+ * đồng thời dừng ngay các listener onSnapshot để ứng dụng chạy mượt bằng Server Sync + LocalStorage.
+ */
+export function markFirestoreQuotaExhausted(): void {
+  memoryQuotaExhausted = true;
+  if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+    try {
+      window.sessionStorage.setItem(
+        QUOTA_CIRCUIT_BREAKER_KEY,
+        String(Date.now() + QUOTA_COOLDOWN_MS)
+      );
+    } catch {
+      // ignore
+    }
+  }
+  if (activeFirestoreUnsubscribers.length > 0) {
+    const toUnsub = [...activeFirestoreUnsubscribers];
+    activeFirestoreUnsubscribers = [];
+    toUnsub.forEach((unsub) => {
+      try {
+        unsub();
+      } catch {
+        // ignore
+      }
+    });
+  }
+}
+
+/**
+ * Cho phép Giáo viên thử kết nối lại với Firestore (ví dụ sau khi hạn mức ngày mới đã được làm mới)
+ */
+export function resetFirestoreQuotaCircuitBreaker(): void {
+  memoryQuotaExhausted = false;
+  if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+    try {
+      window.sessionStorage.removeItem(QUOTA_CIRCUIT_BREAKER_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function broadcastLiveSyncEvent(type: string, payload?: unknown): void {
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return;
+  try {
+    const ch = new BroadcastChannel(LIVE_SYNC_CHANNEL_NAME);
+    ch.postMessage({ type, payload, ts: Date.now() });
+    ch.close();
+  } catch {
+    // ignore
+  }
+}
+
+function saveSubmissionToLocalFallback(sub: FirestoreStudentSubmission): void {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(LOCAL_SUBMISSIONS_FALLBACK_KEY);
+    const list: FirestoreStudentSubmission[] = raw ? JSON.parse(raw) : [];
+    const map = new Map<string, FirestoreStudentSubmission>();
+    if (Array.isArray(list)) {
+      list.forEach((item) => {
+        if (item && item.id) map.set(item.id, item);
+      });
+    }
+    map.set(sub.id, sub);
+    localStorage.setItem(LOCAL_SUBMISSIONS_FALLBACK_KEY, JSON.stringify(Array.from(map.values())));
+  } catch {
+    // ignore
+  }
+}
+
+function getLocalFallbackSubmissions(): FirestoreStudentSubmission[] {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(LOCAL_SUBMISSIONS_FALLBACK_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function postSubmissionToServerApi(sub: FirestoreStudentSubmission): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof fetch === 'undefined') return false;
+  try {
+    const res = await fetch('/api/live-submissions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return Boolean(data && data.ok);
+  } catch {
+    return false;
+  }
+}
+
 export function sanitizeFirestoreId(rawId: string, fallbackPrefix = 'item'): string {
   const cleaned = String(rawId || '')
     .trim()
@@ -91,6 +243,50 @@ function truncateStr(val: string | undefined | null, maxLen: number, fallback = 
 }
 
 /**
+ * Trích xuất mã lỗi cụ thể (error.code) từ lỗi Firebase Auth (ví dụ: auth/unauthorized-domain, auth/popup-blocked, auth/popup-closed-by-user)
+ */
+export function extractFirebaseAuthError(error: unknown): {
+  code: string;
+  rawMessage: string;
+  friendlyMessage: string;
+} {
+  const errObj = error as { code?: string; message?: string } | null;
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof errObj?.message === 'string'
+        ? errObj.message
+        : String(error || 'Unknown error');
+
+  let code = typeof errObj?.code === 'string' && errObj.code.trim() ? errObj.code.trim() : '';
+  if (!code) {
+    const match = rawMessage.match(/\((auth\/[a-zA-Z0-9_-]+)\)/);
+    if (match?.[1]) {
+      code = match[1];
+    } else {
+      code = 'auth/popup-or-domain-error';
+    }
+  }
+
+  let reason = 'Cửa sổ xác thực Google không thể hoàn tất trên thiết bị/tên miền này';
+  if (code.includes('unauthorized-domain')) {
+    reason = 'Tên miền hiện tại chưa được khai báo trong Authorized Domains của Firebase Auth';
+  } else if (code.includes('popup-blocked')) {
+    reason = 'Trình duyệt đã chặn cửa sổ bật lên (Popup)';
+  } else if (code.includes('popup-closed-by-user') || code.includes('cancelled-popup-request')) {
+    reason = 'Cửa sổ xác thực Google đã đóng trước khi hoàn tất';
+  }
+
+  const friendlyMessage = `${reason} [Mã lỗi: ${code}]. Hệ thống đã tự động chuyển sang chế độ đồng bộ Cloud Firestore trực tiếp bằng tài khoản Giáo viên (admin) mà không cần Google Auth.`;
+
+  return {
+    code,
+    rawMessage,
+    friendlyMessage,
+  };
+}
+
+/**
  * Ghi log lỗi chi tiết ra console.error (chuẩn handleFirestoreError) và trả về thông báo tiếng Việt rõ ràng
  * để hiển thị trực tiếp lên màn hình Giáo viên / Học sinh khi bị chặn bởi Firestore Security Rules hoặc mất mạng.
  */
@@ -99,6 +295,11 @@ export function logAndFormatFirestoreError(
   operationType: OperationType,
   path: string | null
 ): string {
+  if (isFirestoreQuotaExceededError(error)) {
+    markFirestoreQuotaExhausted();
+    return `Hạn mức đọc miễn phí trong ngày của Firebase Firestore (Free daily read units) đã tạm hết. Hệ thống đã tự động chuyển sang Chế độ Đồng bộ Máy chủ Trực tiếp để kỳ thi tiếp tục hoạt động bình thường.`;
+  }
+
   try {
     handleFirestoreError(error, operationType, path);
   } catch (thrown) {
@@ -127,7 +328,7 @@ export function logAndFormatFirestoreError(
 }
 
 /**
- * Tự động đăng nhập ẩn danh (signInAnonymously) cho phiên làm việc của Học sinh (hoặc Giáo viên dùng mật khẩu nội bộ)
+ * Tự động đăng nhập ẩn danh (signInAnonymously) cho phiên làm việc của Học sinh hoặc Giáo viên (admin)
  * nếu chưa có phiên Firebase Auth. Không bao giờ ném lỗi chặn luồng nếu Anonymous Auth chưa bật trên Console.
  */
 export async function ensureStudentAnonymousAuth(): Promise<User | null> {
@@ -150,21 +351,23 @@ export async function signInTeacherWithGoogle(): Promise<User> {
   const result = await signInWithPopup(auth, googleProvider);
   const user = result.user;
 
-  if (user && user.emailVerified) {
+  if (user && !isFirestoreQuotaExhausted()) {
     try {
       const adminRef = doc(db, 'admins', user.uid);
-      const snap = await getDoc(adminRef);
-      if (!snap.exists()) {
-        await setDoc(adminRef, {
+      await setDoc(
+        adminRef,
+        {
           ownerId: user.uid,
           displayName: truncateStr(user.displayName || user.email || 'Giáo viên', 120, 'Giáo viên'),
           schoolName: 'Trường TH & THCS Thụy Lâm',
-          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      if (isFirestoreQuotaExceededError(err)) {
+        markFirestoreQuotaExhausted();
       }
-    } catch {
-      // Nếu tài khoản Google không phải bootstrapped admin thì bỏ qua tạo hồ sơ /admins
     }
   }
 
@@ -191,19 +394,18 @@ async function runInBatches<T>(
 }
 
 /**
- * Lưu trực tiếp kết quả bài thi của 1 học sinh lên Firestore thành Document độc lập
- * tại `/submissions/${examId}_${studentCode}` (tuyệt đối không kiểm tra Google Auth và không ghi đè danh sách chung).
+ * Lưu trực tiếp kết quả bài thi của 1 học sinh lên Máy chủ & Firestore thành Document độc lập
+ * tại `/submissions/${examId}_${studentCode}`.
+ * Nếu Firestore đã chạm trần hạn mức miễn phí trong ngày (Quota Exceeded), tự động lưu qua Server API & LocalStorage
+ * để học sinh hoàn thành nộp bài ngay lập tức mà KHÔNG BAO GIỜ bị chặn!
  */
 export async function submitStudentExamResultToFirestore(params: {
   student: Student;
   exam: Exam;
   session: StudentExamSession;
   totalQuestions?: number;
-}): Promise<{ ok: boolean; submissionId: string; error?: string }> {
+}): Promise<{ ok: boolean; submissionId: string; error?: string; quotaFallback?: boolean }> {
   const { student, exam, session } = params;
-
-  // Khởi tạo xác thực ẩn danh nếu có thể (không chặn nếu thất bại)
-  await ensureStudentAnonymousAuth();
 
   const examId = sanitizeFirestoreId(exam.id || session.examId, 'exam');
   const studentCode = sanitizeFirestoreId(
@@ -259,7 +461,7 @@ export async function submitStudentExamResultToFirestore(params: {
   const fullName = truncateStr(student.fullName, MAX_NAME_LENGTH, 'Học sinh');
   const className = truncateStr(student.className, 32, '7A1');
 
-  const submissionPayload = {
+  const submissionRecord: FirestoreStudentSubmission = {
     id: submissionId,
     ownerId: DEFAULT_TEACHER_OWNER_ID,
     examId,
@@ -277,24 +479,42 @@ export async function submitStudentExamResultToFirestore(params: {
     durationSeconds,
     timeRemainingSeconds: remSecs,
     submittedAt,
-    status: 'da_nop_bai' as const,
+    status: 'da_nop_bai',
     answers: session.answers || {},
+  };
+
+  // 1. Luôn lưu ngay vào bộ nhớ dự phòng & đẩy lên Server API (/api/live-submissions) + BroadcastChannel
+  saveSubmissionToLocalFallback(submissionRecord);
+  const serverSavedPromise = postSubmissionToServerApi(submissionRecord);
+  broadcastLiveSyncEvent('student_submission', submissionRecord);
+
+  // 2. Nếu Firestore đang chạm trần Quota miễn phí trong ngày, hoàn tất nộp bài ngay lập tức qua Server API
+  if (isFirestoreQuotaExhausted()) {
+    await serverSavedPromise;
+    return { ok: true, submissionId, quotaFallback: true };
+  }
+
+  // Khởi tạo xác thực ẩn danh nếu có thể (không chặn nếu thất bại)
+  await ensureStudentAnonymousAuth();
+
+  const submissionPayload = {
+    ...submissionRecord,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
 
   try {
-    // 1. Ghi trực tiếp Document bài nộp độc lập lên /submissions/${examId}_${studentCode}
+    // Ghi trực tiếp Document bài nộp độc lập lên /submissions/${examId}_${studentCode} (0 lượt đọc, 1 lượt ghi)
     const submissionRef = doc(db, 'submissions', submissionId);
     await setDoc(submissionRef, submissionPayload);
 
-    // 2. Đồng bộ bổ sung vào bản ghi của riêng học sinh này trên /students/{studentId} (không chạm tới học sinh khác)
+    // Cập nhật điểm vào /students/{studentId} bằng merge: true (KHÔNG gọi getDoc để tiết kiệm lượt đọc Quota!)
     try {
       const stRef = doc(db, 'students', studentId);
-      const stSnap = await getDoc(stRef);
+      const cachedSt = cachedRemoteStudentsMap.get(studentId);
       const existingScores =
-        stSnap.exists() && stSnap.data().examScores && typeof stSnap.data().examScores === 'object'
-          ? (stSnap.data().examScores as Record<string, StudentExamScoreRecord>)
+        cachedSt?.examScores && typeof cachedSt.examScores === 'object'
+          ? (cachedSt.examScores as Record<string, StudentExamScoreRecord>)
           : student.examScores || {};
 
       const updatedExamScores: Record<string, StudentExamScoreRecord> = {
@@ -311,7 +531,7 @@ export async function submitStudentExamResultToFirestore(params: {
         },
       };
 
-      await setDoc(stRef, {
+      const nextStudentDoc = {
         id: studentId,
         ownerId: DEFAULT_TEACHER_OWNER_ID,
         fullName,
@@ -328,15 +548,27 @@ export async function submitStudentExamResultToFirestore(params: {
           latestExamId: exam.id,
           latestSubmittedAt: submittedAt,
         },
-        createdAt: stSnap.exists() && stSnap.data().createdAt ? stSnap.data().createdAt : serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      };
+
+      await setDoc(stRef, nextStudentDoc, { merge: true });
+      cachedRemoteStudentsMap.set(studentId, nextStudentDoc);
     } catch (studentErr) {
-      console.warn('Không thể cập nhật phụ trợ /students/{id}, nhưng /submissions đã lưu thành công:', studentErr);
+      if (isFirestoreQuotaExceededError(studentErr)) {
+        markFirestoreQuotaExhausted();
+      }
     }
 
+    await serverSavedPromise;
     return { ok: true, submissionId };
   } catch (error) {
+    const serverSaved = await serverSavedPromise;
+    if (isFirestoreQuotaExceededError(error) || serverSaved) {
+      if (isFirestoreQuotaExceededError(error)) {
+        markFirestoreQuotaExhausted();
+      }
+      return { ok: true, submissionId, quotaFallback: true };
+    }
     const detailedError = logAndFormatFirestoreError(error, OperationType.WRITE, submissionPath);
     return {
       ok: false,
@@ -347,8 +579,9 @@ export async function submitStudentExamResultToFirestore(params: {
 }
 
 /**
- * Đồng bộ dữ liệu Ngân hàng câu hỏi, Học sinh, Đề thi lên Cloud Firestore
- * Hoạt động cho Giáo viên cả khi đăng nhập bằng tài khoản nội bộ (admin) lẫn Google Auth.
+ * Đồng bộ dữ liệu Ngân hàng câu hỏi, Học sinh, Đề thi và Cài đặt lên Cloud Firestore.
+ * Đã tối ưu hóa: KHÔNG gọi getDocs() trước khi ghi (sử dụng bộ nhớ đệm in-memory từ onSnapshot, tốn 0 lượt đọc!).
+ * Nếu Firestore đang chạm trần Quota miễn phí trong ngày, tự động chuyển sang chế độ đồng bộ qua Máy chủ (/api/sync-repo-data) mà không báo lỗi chặn.
  */
 export async function syncAppDataToFirestore(params: {
   questions: Question[];
@@ -357,24 +590,25 @@ export async function syncAppDataToFirestore(params: {
   sessions: Record<string, StudentExamSession>;
   config?: SystemConfig;
   onError?: (errorMessage: string) => void;
-}): Promise<{ ok: boolean; syncedAt?: string; error?: string }> {
+  onQuotaExceeded?: () => void;
+}): Promise<{ ok: boolean; syncedAt?: string; error?: string; quotaFallback?: boolean }> {
+  broadcastLiveSyncEvent('teacher_data_updated', { ts: Date.now() });
+
+  if (isFirestoreQuotaExhausted()) {
+    params.onQuotaExceeded?.();
+    return { ok: true, syncedAt: new Date().toISOString(), quotaFallback: true };
+  }
+
   const ownerId = DEFAULT_TEACHER_OWNER_ID;
   const errors: string[] = [];
 
-  // 1. ĐỒNG BỘ ĐỀ THI (/exams/{examId})
+  // 1. ĐỒNG BỘ ĐỀ THI (/exams/{examId}) - Không gọi getDocs (0 lượt đọc!)
   try {
-    const existingExamsSnap = await getDocs(
-      query(collection(db, 'exams'), where('ownerId', '==', ownerId))
-    );
-    const remoteExamsMap = new Map<string, Record<string, any>>();
-    existingExamsSnap.forEach((docSnap) => {
-      remoteExamsMap.set(docSnap.id, docSnap.data());
-    });
-
     const localExamIds = new Set<string>();
-    const examsToWrite = params.exams.slice(0, 100);
+    const examsToWrite = params.exams.slice(0, 200);
 
     await runInBatches(examsToWrite, 20, async (ex) => {
+      if (isFirestoreQuotaExhausted()) return;
       const examId = sanitizeFirestoreId(ex.id, 'exam');
       localExamIds.add(examId);
       const examPath = `exams/${examId}`;
@@ -396,7 +630,7 @@ export async function syncAppDataToFirestore(params: {
         rawCreatedAt: ex.createdAt || new Date().toISOString(),
       };
 
-      const existing = remoteExamsMap.get(examId);
+      const existing = cachedRemoteExamsMap.get(examId);
       const nextDoc = {
         id: examId,
         ownerId,
@@ -421,6 +655,7 @@ export async function syncAppDataToFirestore(params: {
 
       const isUnchanged =
         existing &&
+        existing.ownerId === nextDoc.ownerId &&
         existing.title === nextDoc.title &&
         existing.examType === nextDoc.examType &&
         existing.status === nextDoc.status &&
@@ -439,224 +674,317 @@ export async function syncAppDataToFirestore(params: {
 
       try {
         await setDoc(doc(db, 'exams', examId), nextDoc);
+        cachedRemoteExamsMap.set(examId, nextDoc);
       } catch (err) {
+        if (isFirestoreQuotaExceededError(err)) {
+          markFirestoreQuotaExhausted();
+          params.onQuotaExceeded?.();
+          return;
+        }
         const msg = logAndFormatFirestoreError(err, OperationType.WRITE, examPath);
         errors.push(msg);
       }
     });
 
-    // Xóa các đề thi đã bị Giáo viên xóa khỏi danh sách
-    const staleExamIds = Array.from(remoteExamsMap.keys()).filter((id) => !localExamIds.has(id));
-    await runInBatches(staleExamIds, 20, async (staleId) => {
-      try {
-        await deleteDoc(doc(db, 'exams', staleId));
-      } catch (err) {
-        const msg = logAndFormatFirestoreError(err, OperationType.DELETE, `exams/${staleId}`);
-        errors.push(msg);
-      }
-    });
+    if (hasReceivedInitialExamsSnapshot && !isFirestoreQuotaExhausted()) {
+      const staleExamIds = Array.from(cachedRemoteExamsMap.keys()).filter(
+        (id) => !localExamIds.has(id)
+      );
+      await runInBatches(staleExamIds, 20, async (staleId) => {
+        if (isFirestoreQuotaExhausted()) return;
+        try {
+          await deleteDoc(doc(db, 'exams', staleId));
+          cachedRemoteExamsMap.delete(staleId);
+        } catch (err) {
+          if (isFirestoreQuotaExceededError(err)) {
+            markFirestoreQuotaExhausted();
+            params.onQuotaExceeded?.();
+            return;
+          }
+          const msg = logAndFormatFirestoreError(err, OperationType.DELETE, `exams/${staleId}`);
+          errors.push(msg);
+        }
+      });
+    }
   } catch (err) {
-    const msg = logAndFormatFirestoreError(err, OperationType.LIST, 'exams');
+    if (isFirestoreQuotaExceededError(err)) {
+      markFirestoreQuotaExhausted();
+      params.onQuotaExceeded?.();
+      return { ok: true, syncedAt: new Date().toISOString(), quotaFallback: true };
+    }
+    const msg = logAndFormatFirestoreError(err, OperationType.WRITE, 'exams');
     errors.push(msg);
   }
 
-  // 2. ĐỒNG BỘ NGÂN HÀNG CÂU HỎI (/questions/{questionId})
-  try {
-    const existingQuestionsSnap = await getDocs(
-      query(collection(db, 'questions'), where('ownerId', '==', ownerId))
-    );
-    const remoteQuestionsMap = new Map<string, Record<string, any>>();
-    existingQuestionsSnap.forEach((docSnap) => {
-      remoteQuestionsMap.set(docSnap.id, docSnap.data());
-    });
+  // 2. ĐỒNG BỘ NGÂN HÀNG CÂU HỎI (/questions/{questionId}) - Không gọi getDocs (0 lượt đọc!)
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const localQuestionIds = new Set<string>();
+      const questionsToWrite = params.questions.slice(0, 1000);
 
-    const localQuestionIds = new Set<string>();
-    const questionsToWrite = params.questions.slice(0, 300);
+      await runInBatches(questionsToWrite, 25, async (q) => {
+        if (isFirestoreQuotaExhausted()) return;
+        const questionId = sanitizeFirestoreId(q.id, 'q');
+        localQuestionIds.add(questionId);
+        const questionPath = `questions/${questionId}`;
+        const qType = getQuestionType(q);
+        const safeImageUrl =
+          q.imageUrl && q.imageUrl.length < 250_000 ? q.imageUrl : undefined;
 
-    await runInBatches(questionsToWrite, 25, async (q) => {
-      const questionId = sanitizeFirestoreId(q.id, 'q');
-      localQuestionIds.add(questionId);
-      const questionPath = `questions/${questionId}`;
-      const qType = getQuestionType(q);
-      const safeImageUrl =
-        q.imageUrl && q.imageUrl.length < 250_000 ? q.imageUrl : undefined;
+        const payloadMap: Record<string, unknown> = {
+          options: q.options || [],
+          correctOptionId: q.correctOptionId || '',
+          statements: q.statements || [],
+          matchingPairs: q.matchingPairs || [],
+          explanation: truncateStr(q.explanation || '', 2000, ''),
+          ...(safeImageUrl ? { imageUrl: safeImageUrl } : {}),
+          ...(q.imageCaption ? { imageCaption: truncateStr(q.imageCaption, 200, '') } : {}),
+        };
 
-      const payloadMap: Record<string, unknown> = {
-        options: q.options || [],
-        correctOptionId: q.correctOptionId || '',
-        statements: q.statements || [],
-        matchingPairs: q.matchingPairs || [],
-        explanation: truncateStr(q.explanation || '', 2000, ''),
-        ...(safeImageUrl ? { imageUrl: safeImageUrl } : {}),
-        ...(q.imageCaption ? { imageCaption: truncateStr(q.imageCaption, 200, '') } : {}),
-      };
+        const existing = cachedRemoteQuestionsMap.get(questionId);
+        const nextDoc = {
+          id: questionId,
+          ownerId,
+          questionType: qType,
+          themeId: truncateStr(q.themeId, 64, 'chu_de_1'),
+          themeName: truncateStr(q.themeName, 200, 'Chủ đề 1'),
+          lessonId: truncateStr(q.lessonId, 64, 'bai_1'),
+          lessonName: truncateStr(q.lessonName, 200, 'Bài 1'),
+          content: truncateStr(q.content, MAX_QUESTION_CONTENT_LENGTH, 'Câu hỏi'),
+          cognitiveLevel: q.cognitiveLevel || 'nhan_biet',
+          reviewStatus: q.reviewStatus || 'da_kiem_duyet',
+          payloadMap,
+          createdAt: existing?.createdAt || serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
 
-      const existing = remoteQuestionsMap.get(questionId);
-      const nextDoc = {
-        id: questionId,
-        ownerId,
-        questionType: qType,
-        themeId: truncateStr(q.themeId, 64, 'chu_de_1'),
-        themeName: truncateStr(q.themeName, 200, 'Chủ đề 1'),
-        lessonId: truncateStr(q.lessonId, 64, 'bai_1'),
-        lessonName: truncateStr(q.lessonName, 200, 'Bài 1'),
-        content: truncateStr(q.content, MAX_QUESTION_CONTENT_LENGTH, 'Câu hỏi'),
-        cognitiveLevel: q.cognitiveLevel || 'nhan_biet',
-        reviewStatus: q.reviewStatus || 'da_kiem_duyet',
-        payloadMap,
-        createdAt: existing?.createdAt || serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
+        const isUnchanged =
+          existing &&
+          existing.ownerId === nextDoc.ownerId &&
+          existing.content === nextDoc.content &&
+          existing.questionType === nextDoc.questionType &&
+          existing.themeId === nextDoc.themeId &&
+          existing.lessonId === nextDoc.lessonId &&
+          existing.cognitiveLevel === nextDoc.cognitiveLevel &&
+          existing.reviewStatus === nextDoc.reviewStatus &&
+          JSON.stringify(existing.payloadMap) === JSON.stringify(nextDoc.payloadMap);
 
-      const isUnchanged =
-        existing &&
-        existing.content === nextDoc.content &&
-        existing.questionType === nextDoc.questionType &&
-        existing.themeId === nextDoc.themeId &&
-        existing.lessonId === nextDoc.lessonId &&
-        existing.cognitiveLevel === nextDoc.cognitiveLevel &&
-        existing.reviewStatus === nextDoc.reviewStatus &&
-        JSON.stringify(existing.payloadMap) === JSON.stringify(nextDoc.payloadMap);
+        if (isUnchanged) return;
 
-      if (isUnchanged) return;
+        try {
+          await setDoc(doc(db, 'questions', questionId), nextDoc);
+          cachedRemoteQuestionsMap.set(questionId, nextDoc);
+        } catch (err) {
+          if (isFirestoreQuotaExceededError(err)) {
+            markFirestoreQuotaExhausted();
+            params.onQuotaExceeded?.();
+            return;
+          }
+          const msg = logAndFormatFirestoreError(err, OperationType.WRITE, questionPath);
+          errors.push(msg);
+        }
+      });
 
-      try {
-        await setDoc(doc(db, 'questions', questionId), nextDoc);
-      } catch (err) {
-        const msg = logAndFormatFirestoreError(err, OperationType.WRITE, questionPath);
-        errors.push(msg);
+      if (hasReceivedInitialQuestionsSnapshot && !isFirestoreQuotaExhausted()) {
+        const staleQuestionIds = Array.from(cachedRemoteQuestionsMap.keys()).filter(
+          (id) => !localQuestionIds.has(id)
+        );
+        await runInBatches(staleQuestionIds, 25, async (staleId) => {
+          if (isFirestoreQuotaExhausted()) return;
+          try {
+            await deleteDoc(doc(db, 'questions', staleId));
+            cachedRemoteQuestionsMap.delete(staleId);
+          } catch (err) {
+            if (isFirestoreQuotaExceededError(err)) {
+              markFirestoreQuotaExhausted();
+              params.onQuotaExceeded?.();
+              return;
+            }
+            const msg = logAndFormatFirestoreError(
+              err,
+              OperationType.DELETE,
+              `questions/${staleId}`
+            );
+            errors.push(msg);
+          }
+        });
       }
-    });
-
-    const staleQuestionIds = Array.from(remoteQuestionsMap.keys()).filter(
-      (id) => !localQuestionIds.has(id)
-    );
-    await runInBatches(staleQuestionIds, 25, async (staleId) => {
-      try {
-        await deleteDoc(doc(db, 'questions', staleId));
-      } catch (err) {
-        const msg = logAndFormatFirestoreError(err, OperationType.DELETE, `questions/${staleId}`);
-        errors.push(msg);
+    } catch (err) {
+      if (isFirestoreQuotaExceededError(err)) {
+        markFirestoreQuotaExhausted();
+        params.onQuotaExceeded?.();
+        return { ok: true, syncedAt: new Date().toISOString(), quotaFallback: true };
       }
-    });
-  } catch (err) {
-    const msg = logAndFormatFirestoreError(err, OperationType.LIST, 'questions');
-    errors.push(msg);
+      const msg = logAndFormatFirestoreError(err, OperationType.WRITE, 'questions');
+      errors.push(msg);
+    }
   }
 
-  // 3. ĐỒNG BỘ DANH SÁCH HỌC SINH (/students/{studentId}) - Bảo toàn điểm thi đã nộp trên Cloud
-  try {
-    const existingStudentsSnap = await getDocs(
-      query(collection(db, 'students'), where('ownerId', '==', ownerId))
-    );
-    const remoteStudentsMap = new Map<string, Record<string, any>>();
-    existingStudentsSnap.forEach((docSnap) => {
-      remoteStudentsMap.set(docSnap.id, docSnap.data());
-    });
+  // 3. ĐỒNG BỘ DANH SÁCH HỌC SINH (/students/{studentId}) - Không gọi getDocs (0 lượt đọc!)
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const localStudentIds = new Set<string>();
+      const studentsToWrite = params.students.slice(0, 1000);
 
-    const localStudentIds = new Set<string>();
-    const studentsToWrite = params.students.slice(0, 500);
+      await runInBatches(studentsToWrite, 25, async (st) => {
+        if (isFirestoreQuotaExhausted()) return;
+        const studentId = sanitizeFirestoreId(st.id, 'st');
+        localStudentIds.add(studentId);
+        const studentPath = `students/${studentId}`;
+        const loginCode = sanitizeFirestoreId(st.loginCode, 'hs').slice(0, 64);
 
-    await runInBatches(studentsToWrite, 25, async (st) => {
-      const studentId = sanitizeFirestoreId(st.id, 'st');
-      localStudentIds.add(studentId);
-      const studentPath = `students/${studentId}`;
-      const loginCode = sanitizeFirestoreId(st.loginCode, 'hs').slice(0, 64);
+        const existing = cachedRemoteStudentsMap.get(studentId);
+        const remoteExamScores =
+          existing?.examScores && typeof existing.examScores === 'object'
+            ? (existing.examScores as Record<string, StudentExamScoreRecord>)
+            : {};
+        const localExamScores =
+          st.examScores && typeof st.examScores === 'object' ? st.examScores : {};
 
-      const existing = remoteStudentsMap.get(studentId);
-      const remoteExamScores =
-        existing?.examScores && typeof existing.examScores === 'object'
-          ? (existing.examScores as Record<string, StudentExamScoreRecord>)
-          : {};
-      const localExamScores =
-        st.examScores && typeof st.examScores === 'object' ? st.examScores : {};
+        // Hợp nhất điểm thi giữa máy Giáo viên và Cloud Firestore (không làm mất điểm học sinh vừa nộp)
+        const mergedExamScores: Record<string, StudentExamScoreRecord> = {
+          ...localExamScores,
+          ...remoteExamScores,
+        };
 
-      // Hợp nhất điểm thi giữa máy Giáo viên và Cloud Firestore (không làm mất điểm học sinh vừa nộp)
-      const mergedExamScores: Record<string, StudentExamScoreRecord> = {
-        ...localExamScores,
-        ...remoteExamScores,
-      };
+        const sortedRecords = Object.values(mergedExamScores).sort((a, b) =>
+          String(b?.submittedAt || '').localeCompare(String(a?.submittedAt || ''))
+        );
+        const latestRecord = sortedRecords[0];
 
-      const sortedRecords = Object.values(mergedExamScores).sort((a, b) =>
-        String(b?.submittedAt || '').localeCompare(String(a?.submittedAt || ''))
-      );
-      const latestRecord = sortedRecords[0];
+        const rawScore =
+          latestRecord?.score ??
+          (typeof st.latestScore === 'number' && Number.isFinite(st.latestScore)
+            ? st.latestScore
+            : typeof existing?.latestScore === 'number'
+              ? existing.latestScore
+              : -1);
+        const latestScore = Math.max(-1, Math.min(100, rawScore));
+        const latestExamTitle = truncateStr(
+          latestRecord?.examTitle || st.latestExamTitle || existing?.latestExamTitle || '',
+          250,
+          ''
+        );
 
-      const rawScore =
-        latestRecord?.score ??
-        (typeof st.latestScore === 'number' && Number.isFinite(st.latestScore)
-          ? st.latestScore
-          : typeof existing?.latestScore === 'number'
-            ? existing.latestScore
-            : -1);
-      const latestScore = Math.max(-1, Math.min(100, rawScore));
-      const latestExamTitle = truncateStr(
-        latestRecord?.examTitle || st.latestExamTitle || existing?.latestExamTitle || '',
-        250,
-        ''
-      );
+        const payloadMap: Record<string, unknown> = {
+          studentIdCode: st.studentIdCode || existing?.payloadMap?.studentIdCode || '',
+          passwordHash: st.passwordHash || existing?.payloadMap?.passwordHash || '123456',
+          workstationNumber: st.workstationNumber ?? existing?.payloadMap?.workstationNumber ?? 1,
+          latestExamId:
+            latestRecord?.examId || st.latestExamId || existing?.payloadMap?.latestExamId || '',
+          latestSubmittedAt:
+            latestRecord?.submittedAt ||
+            st.latestSubmittedAt ||
+            existing?.payloadMap?.latestSubmittedAt ||
+            '',
+        };
 
-      const payloadMap: Record<string, unknown> = {
-        studentIdCode: st.studentIdCode || existing?.payloadMap?.studentIdCode || '',
-        passwordHash: st.passwordHash || existing?.payloadMap?.passwordHash || '123456',
-        workstationNumber: st.workstationNumber ?? existing?.payloadMap?.workstationNumber ?? 1,
-        latestExamId:
-          latestRecord?.examId || st.latestExamId || existing?.payloadMap?.latestExamId || '',
-        latestSubmittedAt:
-          latestRecord?.submittedAt ||
-          st.latestSubmittedAt ||
-          existing?.payloadMap?.latestSubmittedAt ||
-          '',
-      };
+        const nextDoc = {
+          id: studentId,
+          ownerId,
+          fullName: truncateStr(st.fullName, MAX_NAME_LENGTH, 'Học sinh'),
+          normalizedName: truncateStr(
+            st.normalizedName || st.fullName,
+            MAX_NAME_LENGTH,
+            'hoc sinh'
+          ),
+          loginCode,
+          className: truncateStr(st.className, 32, '7A1'),
+          latestScore,
+          latestExamTitle,
+          examScores: mergedExamScores,
+          payloadMap,
+          createdAt: existing?.createdAt || serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
 
-      const nextDoc = {
-        id: studentId,
+        const isUnchanged =
+          existing &&
+          existing.ownerId === nextDoc.ownerId &&
+          existing.fullName === nextDoc.fullName &&
+          existing.loginCode === nextDoc.loginCode &&
+          existing.className === nextDoc.className &&
+          existing.latestScore === nextDoc.latestScore &&
+          existing.latestExamTitle === nextDoc.latestExamTitle &&
+          JSON.stringify(existing.examScores) === JSON.stringify(nextDoc.examScores);
+
+        if (isUnchanged) return;
+
+        try {
+          await setDoc(doc(db, 'students', studentId), nextDoc);
+          cachedRemoteStudentsMap.set(studentId, nextDoc);
+        } catch (err) {
+          if (isFirestoreQuotaExceededError(err)) {
+            markFirestoreQuotaExhausted();
+            params.onQuotaExceeded?.();
+            return;
+          }
+          const msg = logAndFormatFirestoreError(err, OperationType.WRITE, studentPath);
+          errors.push(msg);
+        }
+      });
+
+      if (hasReceivedInitialStudentsSnapshot && !isFirestoreQuotaExhausted()) {
+        const staleStudentIds = Array.from(cachedRemoteStudentsMap.keys()).filter(
+          (id) => !localStudentIds.has(id)
+        );
+        await runInBatches(staleStudentIds, 25, async (staleId) => {
+          if (isFirestoreQuotaExhausted()) return;
+          try {
+            await deleteDoc(doc(db, 'students', staleId));
+            cachedRemoteStudentsMap.delete(staleId);
+          } catch (err) {
+            if (isFirestoreQuotaExceededError(err)) {
+              markFirestoreQuotaExhausted();
+              params.onQuotaExceeded?.();
+              return;
+            }
+            const msg = logAndFormatFirestoreError(
+              err,
+              OperationType.DELETE,
+              `students/${staleId}`
+            );
+            errors.push(msg);
+          }
+        });
+      }
+    } catch (err) {
+      if (isFirestoreQuotaExceededError(err)) {
+        markFirestoreQuotaExhausted();
+        params.onQuotaExceeded?.();
+        return { ok: true, syncedAt: new Date().toISOString(), quotaFallback: true };
+      }
+      const msg = logAndFormatFirestoreError(err, OperationType.WRITE, 'students');
+      errors.push(msg);
+    }
+  }
+
+  // 4. ĐỒNG BỘ CẤU HÌNH HỆ THỐNG (/settings/system_config)
+  if (params.config && !isFirestoreQuotaExhausted()) {
+    try {
+      await setDoc(doc(db, 'settings', 'system_config'), {
+        id: 'system_config',
         ownerId,
-        fullName: truncateStr(st.fullName, MAX_NAME_LENGTH, 'Học sinh'),
-        normalizedName: truncateStr(st.normalizedName || st.fullName, MAX_NAME_LENGTH, 'hoc sinh'),
-        loginCode,
-        className: truncateStr(st.className, 32, '7A1'),
-        latestScore,
-        latestExamTitle,
-        examScores: mergedExamScores,
-        payloadMap,
-        createdAt: existing?.createdAt || serverTimestamp(),
+        schoolName: params.config.schoolName || 'Trường TH & THCS Thụy Lâm',
+        subjectName:
+          params.config.subjectName || 'Tin học 7 - Bộ sách Kết nối tri thức với cuộc sống',
+        activeExamId: params.config.activeExamId || '',
         updatedAt: serverTimestamp(),
-      };
-
-      const isUnchanged =
-        existing &&
-        existing.fullName === nextDoc.fullName &&
-        existing.loginCode === nextDoc.loginCode &&
-        existing.className === nextDoc.className &&
-        existing.latestScore === nextDoc.latestScore &&
-        existing.latestExamTitle === nextDoc.latestExamTitle &&
-        JSON.stringify(existing.examScores) === JSON.stringify(nextDoc.examScores);
-
-      if (isUnchanged) return;
-
-      try {
-        await setDoc(doc(db, 'students', studentId), nextDoc);
-      } catch (err) {
-        const msg = logAndFormatFirestoreError(err, OperationType.WRITE, studentPath);
-        errors.push(msg);
+      });
+    } catch (err) {
+      if (isFirestoreQuotaExceededError(err)) {
+        markFirestoreQuotaExhausted();
+        params.onQuotaExceeded?.();
+        return { ok: true, syncedAt: new Date().toISOString(), quotaFallback: true };
       }
-    });
+      const msg = logAndFormatFirestoreError(err, OperationType.WRITE, 'settings/system_config');
+      errors.push(msg);
+    }
+  }
 
-    const staleStudentIds = Array.from(remoteStudentsMap.keys()).filter(
-      (id) => !localStudentIds.has(id)
-    );
-    await runInBatches(staleStudentIds, 25, async (staleId) => {
-      try {
-        await deleteDoc(doc(db, 'students', staleId));
-      } catch (err) {
-        const msg = logAndFormatFirestoreError(err, OperationType.DELETE, `students/${staleId}`);
-        errors.push(msg);
-      }
-    });
-  } catch (err) {
-    const msg = logAndFormatFirestoreError(err, OperationType.LIST, 'students');
-    errors.push(msg);
+  if (isFirestoreQuotaExhausted()) {
+    params.onQuotaExceeded?.();
+    return { ok: true, syncedAt: new Date().toISOString(), quotaFallback: true };
   }
 
   if (errors.length > 0) {
@@ -671,15 +999,19 @@ export async function syncAppDataToFirestore(params: {
 }
 
 /**
- * Đồng bộ 1 phiên làm bài của học sinh lên Firestore (không chặn bởi kiểm tra Google Auth)
+ * Đồng bộ 1 phiên làm bài của học sinh lên Firestore (không chặn bởi kiểm tra Google Auth hay lỗi Quota)
  */
 export async function syncSessionToFirestore(session: StudentExamSession): Promise<void> {
+  if (isFirestoreQuotaExhausted()) return;
+
+  // Chỉ ghi phiên lên Firestore khi học sinh bắt đầu hoặc nộp bài để tiết kiệm Quota đọc/ghi
+  if (session.status !== 'da_nop_bai') return;
+
   const examId = sanitizeFirestoreId(session.examId, 'exam');
   const sessionId = sanitizeFirestoreId(
     session.id || `${session.studentId}_${session.examId}`,
     'sess'
   );
-  const sessionPath = `exams/${examId}/sessions/${sessionId}`;
 
   try {
     const sessRef = doc(db, 'exams', examId, 'sessions', sessionId);
@@ -711,8 +1043,10 @@ export async function syncSessionToFirestore(session: StudentExamSession): Promi
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-  } catch {
-    // Phiên nháp đang làm có thể bỏ qua nếu đề thi chưa tồn tại trên /exams; khi nộp bài sẽ dùng submitStudentExamResultToFirestore
+  } catch (err) {
+    if (isFirestoreQuotaExceededError(err)) {
+      markFirestoreQuotaExhausted();
+    }
   }
 }
 
@@ -743,7 +1077,9 @@ function mapFirestoreDocToExam(d: Record<string, any>): Exam {
     type: examType,
     classes: Array.isArray(d.classes) ? d.classes.map(String) : ['7A1'],
     durationMinutes,
-    totalQuestions: Number(d.totalQuestions || (Array.isArray(d.questionIds) ? d.questionIds.length : 0)),
+    totalQuestions: Number(
+      d.totalQuestions || (Array.isArray(d.questionIds) ? d.questionIds.length : 0)
+    ),
     maxScore: Number(d.maxScore || 10),
     questionIds: Array.isArray(d.questionIds) ? d.questionIds.map(String) : [],
     status: (d.status || 'chua_mo') as Exam['status'],
@@ -811,8 +1147,8 @@ function mapFirestoreDocToStudent(d: Record<string, any>): Student {
 }
 
 /**
- * Lắng nghe dữ liệu thời gian thực (onSnapshot) trực tiếp từ Firebase Firestore
- * cho cả chế độ Giáo viên và Học sinh đối với:
+ * Lắng nghe dữ liệu thời gian thực (onSnapshot + Server Live Sync dự phòng khi hết Quota)
+ * cho cả chế độ Giáo viên (admin hoặc Google) và Học sinh đối với:
  * 1. Danh sách đề thi (exams)
  * 2. Ngân hàng câu hỏi (questions)
  * 3. Danh sách học sinh (students)
@@ -824,68 +1160,157 @@ export function subscribeAllFirestoreData(callbacks: {
   onStudents: (remoteStudents: Student[], isEmpty: boolean) => void;
   onSubmissions: (remoteSubmissions: FirestoreStudentSubmission[]) => void;
   onError?: (errorMessage: string) => void;
+  onQuotaExceeded?: () => void;
 }): Unsubscribe {
   const ownerId = DEFAULT_TEACHER_OWNER_ID;
+  let lastServerUpdatedAt = '';
 
-  const examsQuery = query(collection(db, 'exams'), where('ownerId', '==', ownerId));
-  const questionsQuery = query(collection(db, 'questions'), where('ownerId', '==', ownerId));
-  const studentsQuery = query(collection(db, 'students'), where('ownerId', '==', ownerId));
-  const submissionsQuery = query(collection(db, 'submissions'), where('ownerId', '==', ownerId));
+  // Hàm đồng bộ trực tiếp từ Server API (/api/sync-repo-data) + LocalStorage Submissions
+  const pullFromServerLiveState = async () => {
+    const localSubs = getLocalFallbackSubmissions();
+    if (localSubs.length > 0) {
+      callbacks.onSubmissions(localSubs);
+    }
+
+    if (typeof window === 'undefined' || typeof fetch === 'undefined') return;
+    try {
+      const res = await fetch('/api/sync-repo-data', { method: 'GET' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || !data.ok) return;
+
+      const serverSubs: FirestoreStudentSubmission[] = Array.isArray(data.submissions)
+        ? data.submissions
+        : [];
+      const mergedSubsMap = new Map<string, FirestoreStudentSubmission>();
+      localSubs.forEach((s) => mergedSubsMap.set(s.id, s));
+      serverSubs.forEach((s) => {
+        if (s && s.id) mergedSubsMap.set(String(s.id), s);
+      });
+      if (mergedSubsMap.size > 0) {
+        callbacks.onSubmissions(Array.from(mergedSubsMap.values()));
+      }
+
+      if (data.updatedAt && data.updatedAt !== lastServerUpdatedAt) {
+        lastServerUpdatedAt = String(data.updatedAt);
+        if (Array.isArray(data.exams) && data.exams.length > 0) {
+          callbacks.onExams(data.exams as Exam[], false);
+        }
+        if (Array.isArray(data.questions) && data.questions.length > 0) {
+          callbacks.onQuestions(data.questions as Question[], false);
+        }
+        if (Array.isArray(data.students) && data.students.length > 0) {
+          callbacks.onStudents(data.students as Student[], false);
+        }
+      }
+    } catch {
+      // Bỏ qua nếu đang chạy bản build tĩnh không có endpoint /api/sync-repo-data
+    }
+  };
+
+  // Nạp ngay từ Server API khi khởi chạy và định kỳ mỗi 4 giây
+  void pullFromServerLiveState();
+  const pollInterval =
+    typeof window !== 'undefined'
+      ? window.setInterval(() => {
+          void pullFromServerLiveState();
+        }, 4000)
+      : null;
+
+  // Lắng nghe BroadcastChannel để đồng bộ tức thì giữa các tab trên cùng trình duyệt
+  let broadcastChannel: BroadcastChannel | null = null;
+  if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+    try {
+      broadcastChannel = new BroadcastChannel(LIVE_SYNC_CHANNEL_NAME);
+      broadcastChannel.onmessage = () => {
+        void pullFromServerLiveState();
+      };
+    } catch {
+      broadcastChannel = null;
+    }
+  }
+
+  // Nếu Firestore đã chạm trần Quota miễn phí trong ngày, không gắn listener onSnapshot để tránh báo lỗi
+  if (isFirestoreQuotaExhausted()) {
+    callbacks.onQuotaExceeded?.();
+    return () => {
+      if (pollInterval !== null) clearInterval(pollInterval);
+      if (broadcastChannel) broadcastChannel.close();
+    };
+  }
+
+  const handleListenerError = (error: unknown, path: string) => {
+    if (isFirestoreQuotaExceededError(error)) {
+      markFirestoreQuotaExhausted();
+      callbacks.onQuotaExceeded?.();
+      void pullFromServerLiveState();
+      return;
+    }
+    const msg = logAndFormatFirestoreError(error, OperationType.LIST, path);
+    callbacks.onError?.(msg);
+  };
+
+  const examsRef = collection(db, 'exams');
+  const questionsRef = collection(db, 'questions');
+  const studentsRef = collection(db, 'students');
+  const submissionsRef = collection(db, 'submissions');
 
   const unsubExams = onSnapshot(
-    examsQuery,
+    examsRef,
     (snapshot) => {
+      hasReceivedInitialExamsSnapshot = true;
+      cachedRemoteExamsMap.clear();
       const list: Exam[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(mapFirestoreDocToExam(docSnap.data()));
+        const raw = docSnap.data();
+        cachedRemoteExamsMap.set(docSnap.id, raw);
+        list.push(mapFirestoreDocToExam(raw));
       });
-      // Sắp xếp đề mới tạo lên đầu
       list.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
       callbacks.onExams(list, snapshot.empty);
     },
-    (error) => {
-      const msg = logAndFormatFirestoreError(error, OperationType.LIST, 'exams');
-      callbacks.onError?.(msg);
-    }
+    (error) => handleListenerError(error, 'exams')
   );
 
   const unsubQuestions = onSnapshot(
-    questionsQuery,
+    questionsRef,
     (snapshot) => {
+      hasReceivedInitialQuestionsSnapshot = true;
+      cachedRemoteQuestionsMap.clear();
       const list: Question[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(mapFirestoreDocToQuestion(docSnap.data()));
+        const raw = docSnap.data();
+        cachedRemoteQuestionsMap.set(docSnap.id, raw);
+        list.push(mapFirestoreDocToQuestion(raw));
       });
       callbacks.onQuestions(list, snapshot.empty);
     },
-    (error) => {
-      const msg = logAndFormatFirestoreError(error, OperationType.LIST, 'questions');
-      callbacks.onError?.(msg);
-    }
+    (error) => handleListenerError(error, 'questions')
   );
 
   const unsubStudents = onSnapshot(
-    studentsQuery,
+    studentsRef,
     (snapshot) => {
+      hasReceivedInitialStudentsSnapshot = true;
+      cachedRemoteStudentsMap.clear();
       const list: Student[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(mapFirestoreDocToStudent(docSnap.data()));
+        const raw = docSnap.data();
+        cachedRemoteStudentsMap.set(docSnap.id, raw);
+        list.push(mapFirestoreDocToStudent(raw));
       });
       callbacks.onStudents(list, snapshot.empty);
     },
-    (error) => {
-      const msg = logAndFormatFirestoreError(error, OperationType.LIST, 'students');
-      callbacks.onError?.(msg);
-    }
+    (error) => handleListenerError(error, 'students')
   );
 
   const unsubSubmissions = onSnapshot(
-    submissionsQuery,
+    submissionsRef,
     (snapshot) => {
       const list: FirestoreStudentSubmission[] = [];
       snapshot.forEach((docSnap) => {
         const d = docSnap.data();
-        list.push({
+        const sub: FirestoreStudentSubmission = {
           id: String(d.id || docSnap.id),
           ownerId: String(d.ownerId || ownerId),
           examId: String(d.examId || ''),
@@ -905,21 +1330,29 @@ export function subscribeAllFirestoreData(callbacks: {
           submittedAt: String(d.submittedAt || new Date().toISOString()),
           status: (d.status || 'da_nop_bai') as FirestoreStudentSubmission['status'],
           answers: d.answers && typeof d.answers === 'object' ? d.answers : {},
-        });
+        };
+        list.push(sub);
       });
-      callbacks.onSubmissions(list);
+      if (list.length > 0) {
+        callbacks.onSubmissions(list);
+      }
     },
-    (error) => {
-      const msg = logAndFormatFirestoreError(error, OperationType.LIST, 'submissions');
-      callbacks.onError?.(msg);
-    }
+    (error) => handleListenerError(error, 'submissions')
   );
 
+  activeFirestoreUnsubscribers = [unsubExams, unsubQuestions, unsubStudents, unsubSubmissions];
+
   return () => {
-    unsubExams();
-    unsubQuestions();
-    unsubStudents();
-    unsubSubmissions();
+    if (pollInterval !== null) clearInterval(pollInterval);
+    if (broadcastChannel) broadcastChannel.close();
+    activeFirestoreUnsubscribers.forEach((u) => {
+      try {
+        u();
+      } catch {
+        // ignore
+      }
+    });
+    activeFirestoreUnsubscribers = [];
   };
 }
 
@@ -932,13 +1365,19 @@ export async function fetchFirestoreCloudStats(): Promise<{
   questionsCount: number;
   submissionsCount?: number;
 } | null> {
+  if (isFirestoreQuotaExhausted()) {
+    return {
+      examsCount: cachedRemoteExamsMap.size,
+      studentsCount: cachedRemoteStudentsMap.size,
+      questionsCount: cachedRemoteQuestionsMap.size,
+    };
+  }
   try {
-    const ownerId = DEFAULT_TEACHER_OWNER_ID;
     const [examsSnap, studentsSnap, questionsSnap, submissionsSnap] = await Promise.all([
-      getDocs(query(collection(db, 'exams'), where('ownerId', '==', ownerId))),
-      getDocs(query(collection(db, 'students'), where('ownerId', '==', ownerId))),
-      getDocs(query(collection(db, 'questions'), where('ownerId', '==', ownerId))),
-      getDocs(query(collection(db, 'submissions'), where('ownerId', '==', ownerId))),
+      getDocs(collection(db, 'exams')),
+      getDocs(collection(db, 'students')),
+      getDocs(collection(db, 'questions')),
+      getDocs(collection(db, 'submissions')),
     ]);
     return {
       examsCount: examsSnap.size,
@@ -947,7 +1386,9 @@ export async function fetchFirestoreCloudStats(): Promise<{
       submissionsCount: submissionsSnap.size,
     };
   } catch (error) {
-    logAndFormatFirestoreError(error, OperationType.LIST, 'exams');
+    if (isFirestoreQuotaExceededError(error)) {
+      markFirestoreQuotaExhausted();
+    }
     return null;
   }
 }

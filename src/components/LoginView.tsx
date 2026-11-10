@@ -21,6 +21,7 @@ import {
   authenticateTeacher,
   getQuickSelectStudentsForExam,
 } from '../utils/auth';
+import { extractFirebaseAuthError } from '../utils/firebaseSync';
 
 interface LoginViewProps {
   students: Student[];
@@ -73,6 +74,12 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [teacherPassword, setTeacherPassword] = useState('');
   const [showTeacherPassword, setShowTeacherPassword] = useState(false);
   const [teacherError, setTeacherError] = useState('');
+  const [googleAuthFallbackInfo, setGoogleAuthFallbackInfo] = useState<{
+    code: string;
+    rawMessage: string;
+    friendlyMessage: string;
+  } | null>(null);
+  const teacherPasswordInputRef = React.useRef<HTMLInputElement>(null);
 
   // State đăng nhập Học sinh (Chọn kỳ thi + Chọn lớp + Mã đăng nhập + Mật khẩu)
   const [selectedClass, setSelectedClass] = useState<string>(
@@ -107,6 +114,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       return;
     }
     setTeacherError('');
+    setGoogleAuthFallbackInfo(null);
     onLoginTeacher();
   };
 
@@ -208,7 +216,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <span>Đăng nhập Quản trị &amp; Tổ chức thi dành cho Giáo viên</span>
                 </p>
                 <p className="text-[11px] text-blue-700">
-                  Quản lý ngân hàng câu hỏi, tạo &amp; in đề chuẩn A4, xuất Word (.docx), mở kỳ thi và giám sát phòng máy.
+                  Đăng nhập bằng tài khoản <strong>admin</strong> để tự động kết nối và đồng bộ trực tiếp với <strong>Cloud Firebase Firestore</strong> (Ngân hàng câu hỏi, Học sinh, Đề thi, Bảng điểm).
                 </p>
               </div>
 
@@ -219,6 +227,32 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 >
                   <AlertTriangle className="w-4 h-4 shrink-0" />
                   <span className="font-semibold">{teacherError}</span>
+                </div>
+              )}
+
+              {googleAuthFallbackInfo && (
+                <div
+                  role="status"
+                  data-testid="google-auth-fallback-banner"
+                  className="bg-amber-50 border border-amber-300 text-amber-950 p-3.5 rounded-xl text-xs space-y-1.5"
+                >
+                  <div className="flex items-start space-x-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-extrabold text-amber-900">
+                        Đã tự động chuyển sang chế độ đồng bộ Cloud trực tiếp bằng tài khoản Giáo viên (admin)
+                      </p>
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        {googleAuthFallbackInfo.friendlyMessage}
+                      </p>
+                      <p className="font-mono text-[11px] bg-white/80 border border-amber-200 rounded-lg px-2.5 py-1 text-amber-900 break-all">
+                        error.code: <strong>{googleAuthFallbackInfo.code}</strong> | Chi tiết: {googleAuthFallbackInfo.rawMessage}
+                      </p>
+                      <p className="text-[11px] font-bold text-emerald-800">
+                        → Vui lòng nhập mật khẩu tài khoản <strong>admin</strong> bên dưới và bấm &ldquo;Đăng nhập Giáo viên (Đồng bộ Cloud Firestore)&rdquo; để làm việc ngay.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -254,6 +288,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
+                    ref={teacherPasswordInputRef}
                     id="teacher-password"
                     data-testid="input-teacher-password"
                     type={showTeacherPassword ? 'text' : 'password'}
@@ -283,7 +318,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 data-testid="btn-submit-teacher-login"
                 className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 px-4 rounded-xl shadow-md transition-all text-sm flex items-center justify-center space-x-2 cursor-pointer"
               >
-                <span>Đăng nhập Giáo viên</span>
+                <span>Đăng nhập Giáo viên (Đồng bộ Cloud Firestore)</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -293,12 +328,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   data-testid="btn-google-teacher-login"
                   onClick={async () => {
                     setTeacherError('');
+                    setGoogleAuthFallbackInfo(null);
                     try {
                       await onLoginTeacherGoogle();
-                    } catch (_err) {
-                      setTeacherError(
-                        'Không thể đăng nhập bằng Google hoặc cửa sổ xác thực đã đóng.'
-                      );
+                    } catch (err) {
+                      const errInfo = extractFirebaseAuthError(err);
+                      console.error('Lỗi đăng nhập Google Popup:', errInfo.code, err);
+                      setGoogleAuthFallbackInfo(errInfo);
+                      // Nếu giáo viên đã nhập sẵn tài khoản & mật khẩu admin hợp lệ thì tự động đăng nhập luôn
+                      const candidateUser = teacherUsername.trim() || 'admin';
+                      const checkAdmin = authenticateTeacher(candidateUser, teacherPassword);
+                      if (checkAdmin.ok) {
+                        onLoginTeacher();
+                        return;
+                      }
+                      // Tự động điền sẵn tài khoản 'admin' và đưa con trỏ vào ô mật khẩu để không làm gián đoạn công việc
+                      if (!teacherUsername.trim()) {
+                        setTeacherUsername('admin');
+                      }
+                      setTimeout(() => {
+                        teacherPasswordInputRef.current?.focus();
+                      }, 50);
                     }
                   }}
                   className="w-full bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold py-2.5 px-4 rounded-xl shadow-2xs transition-all text-xs flex items-center justify-center space-x-2 cursor-pointer"
