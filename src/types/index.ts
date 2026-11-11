@@ -76,6 +76,8 @@ export interface StudentExamScoreRecord {
   unansweredCount?: number;
   paperCode?: string;
   submittedAt: string;
+  attemptCount?: number;
+  previousScore?: number;
 }
 
 export interface Student {
@@ -162,6 +164,9 @@ export interface StudentExamSession {
   correctCount?: number;
   wrongCount?: number;
   unansweredCount?: number;
+  attemptCount?: number; // Số lần thi (1 = lần đầu, 2 = thi lại lần 2 cho HS điểm < 5.0)
+  previousScore?: number; // Điểm lần 1 trước khi được cấp quyền thi lại lần 2
+  retakeGrantedAt?: string; // Thời điểm giáo viên cấp quyền thi lại
   lastHeartbeat: string;
   workstationIp?: string;
 }

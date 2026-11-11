@@ -579,6 +579,112 @@ export async function submitStudentExamResultToFirestore(params: {
 }
 
 /**
+ * Xóa bản ghi nộp bài cũ trên Local Fallback, Server API và Cloud Firestore
+ * khi Giáo viên cấp quyền "Thi lại (Lần 2)" cho học sinh có điểm < 5.0
+ */
+export async function resetStudentSubmissionForRetake(
+  rawExamId: string,
+  targetStudents: Student[]
+): Promise<void> {
+  if (!rawExamId || targetStudents.length === 0) return;
+
+  const examId = sanitizeFirestoreId(rawExamId, 'exam');
+  const submissionIdsToRemove = new Set<string>();
+  targetStudents.forEach((st) => {
+    const stCode = sanitizeFirestoreId(st.loginCode || st.id, 'hs').slice(0, 64);
+    submissionIdsToRemove.add(`${examId}_${stCode}`.slice(0, MAX_ID_LENGTH));
+    submissionIdsToRemove.add(`${rawExamId}_${st.loginCode}`);
+  });
+
+  // 1. Xóa khỏi bộ nhớ dự phòng cục bộ (LOCAL_SUBMISSIONS_FALLBACK_KEY)
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(LOCAL_SUBMISSIONS_FALLBACK_KEY);
+      if (raw) {
+        const list: FirestoreStudentSubmission[] = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const filtered = list.filter(
+            (item) =>
+              item &&
+              !submissionIdsToRemove.has(item.id) &&
+              !(
+                item.examId === rawExamId &&
+                targetStudents.some(
+                  (st) =>
+                    st.id === item.studentId ||
+                    st.loginCode.toLowerCase() === String(item.studentCode || '').toLowerCase()
+                )
+              )
+          );
+          localStorage.setItem(LOCAL_SUBMISSIONS_FALLBACK_KEY, JSON.stringify(filtered));
+        }
+      }
+      // Xóa bộ nhớ đệm điểm cục bộ của học sinh (smarttest7_local_score_cache_v1)
+      const localScoreCacheRaw = localStorage.getItem('smarttest7_local_score_cache_v1');
+      if (localScoreCacheRaw) {
+        const parsedCache = JSON.parse(localScoreCacheRaw);
+        if (parsedCache && typeof parsedCache === 'object') {
+          targetStudents.forEach((st) => {
+            delete parsedCache[`${st.id}_${rawExamId}`];
+          });
+          localStorage.setItem('smarttest7_local_score_cache_v1', JSON.stringify(parsedCache));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. Gửi thông báo xóa bài nộp cũ lên Server API (/api/live-submissions)
+  if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+    try {
+      await fetch('/api/live-submissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset_retake',
+          examId: rawExamId,
+          students: targetStudents.map((st) => ({
+            id: st.id,
+            loginCode: st.loginCode,
+            className: st.className,
+          })),
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  broadcastLiveSyncEvent('student_retake_granted', {
+    examId: rawExamId,
+    studentIds: targetStudents.map((s) => s.id),
+  });
+
+  // 3. Xóa bài nộp cũ trên Cloud Firestore (nếu chưa chạm trần Quota)
+  if (isFirestoreQuotaExhausted()) return;
+
+  for (const st of targetStudents) {
+    const stCode = sanitizeFirestoreId(st.loginCode || st.id, 'hs').slice(0, 64);
+    const subId = `${examId}_${stCode}`.slice(0, MAX_ID_LENGTH);
+    const sessId = sanitizeFirestoreId(`sess_${st.id}_${rawExamId}`, 'sess');
+    try {
+      await deleteDoc(doc(db, 'submissions', subId));
+    } catch (err) {
+      if (isFirestoreQuotaExceededError(err)) {
+        markFirestoreQuotaExhausted();
+        return;
+      }
+    }
+    try {
+      await deleteDoc(doc(db, 'exams', examId, 'sessions', sessId));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
  * Đồng bộ dữ liệu Ngân hàng câu hỏi, Học sinh, Đề thi và Cài đặt lên Cloud Firestore.
  * Đã tối ưu hóa: KHÔNG gọi getDocs() trước khi ghi (sử dụng bộ nhớ đệm in-memory từ onSnapshot, tốn 0 lượt đọc!).
  * Nếu Firestore đang chạm trần Quota miễn phí trong ngày, tự động chuyển sang chế độ đồng bộ qua Máy chủ (/api/sync-repo-data) mà không báo lỗi chặn.

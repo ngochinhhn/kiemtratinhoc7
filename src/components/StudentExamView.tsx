@@ -1049,6 +1049,28 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
 
           {activeExam ? (
             <div className="space-y-4 text-xs">
+              {(currentSession?.attemptCount ?? 1) >= 2 && (
+                <div
+                  data-testid="student-retake-attempt-banner"
+                  className="bg-amber-50 border border-amber-300 text-amber-950 p-3.5 rounded-xl flex items-start space-x-2.5"
+                >
+                  <RotateCcw className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold text-amber-900">
+                      Lượt thi lại Lần {currentSession?.attemptCount || 2} (Dành cho học sinh cải thiện điểm &lt; 5.0)
+                    </p>
+                    <p className="text-[11px] text-amber-800 mt-0.5">
+                      Giáo viên đã mở quyền cho em làm lại bài thi này lần thứ{' '}
+                      {currentSession?.attemptCount || 2}
+                      {currentSession?.previousScore !== undefined
+                        ? ` (Điểm lần trước: ${currentSession.previousScore} điểm)`
+                        : ''}
+                      . Hãy đọc kỹ câu hỏi để đạt kết quả tốt nhất!
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
                 <span className="text-blue-600 font-bold block uppercase text-[10px]">
                   Bài kiểm tra được phân công:
@@ -1086,7 +1108,11 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
                 data-testid="btn-start-student-exam"
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all text-sm flex items-center justify-center space-x-2 cursor-pointer"
               >
-                <span>Bắt đầu làm bài thi</span>
+                <span>
+                  {(currentSession?.attemptCount ?? 1) >= 2
+                    ? `Bắt đầu Thi lại (Lần ${currentSession?.attemptCount || 2})`
+                    : 'Bắt đầu làm bài thi'}
+                </span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>

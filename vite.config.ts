@@ -104,6 +104,60 @@ function repoDataSyncPlugin(): Plugin {
         req.on('end', () => {
           try {
             const sub = JSON.parse(body);
+
+            // Xử lý yêu cầu mở quyền Thi lại lần 2 cho học sinh có điểm < 5.0
+            if (sub && sub.action === 'reset_retake' && sub.examId && Array.isArray(sub.students)) {
+              const nowIso = new Date().toISOString();
+              const targetExamId = String(sub.examId);
+              const targetIds = new Set(sub.students.map((s: any) => String(s.id || '')));
+              const targetCodes = new Set(
+                sub.students.map((s: any) => String(s.loginCode || '').toLowerCase())
+              );
+
+              for (const [key, existingSub] of Array.from(serverSubmissionsMap.entries())) {
+                if (
+                  existingSub &&
+                  existingSub.examId === targetExamId &&
+                  (targetIds.has(String(existingSub.studentId || '')) ||
+                    targetCodes.has(String(existingSub.studentCode || '').toLowerCase()))
+                ) {
+                  serverSubmissionsMap.delete(key);
+                }
+              }
+
+              serverStudents = serverStudents.map((st: any) => {
+                if (
+                  !targetIds.has(String(st.id || '')) &&
+                  !targetCodes.has(String(st.loginCode || '').toLowerCase())
+                ) {
+                  return st;
+                }
+                const nextExamScores = { ...(st.examScores || {}) };
+                delete nextExamScores[targetExamId];
+                const remaining = Object.values(nextExamScores).sort((a: any, b: any) =>
+                  String(b?.submittedAt || '').localeCompare(String(a?.submittedAt || ''))
+                ) as any[];
+                const latest = remaining[0];
+                return {
+                  ...st,
+                  examScores: nextExamScores,
+                  latestScore: latest ? latest.score : undefined,
+                  latestExamId: latest ? latest.examId : undefined,
+                  latestExamTitle: latest ? latest.examTitle : undefined,
+                  latestSubmittedAt: latest ? latest.submittedAt : undefined,
+                };
+              });
+
+              serverUpdatedAt = nowIso;
+              persistSubmissionsToDisk();
+              persistStudentsToDisk(nowIso);
+
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = 200;
+              res.end(JSON.stringify({ ok: true, updatedAt: nowIso }));
+              return;
+            }
+
             if (!sub || !sub.id || !sub.examId) {
               res.setHeader('Content-Type', 'application/json');
               res.statusCode = 400;

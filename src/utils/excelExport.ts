@@ -680,19 +680,96 @@ export async function exportStudentAccountsExcel(
   triggerDownload(buffer, `Danh_Sach_Lop_Va_Diem_Tin7_${fileSuffix}.xlsx`);
 }
 
+export interface ExamReportSheetData {
+  filename: string;
+  classScopeTitle: string;
+  classLabel: string;
+  sheet1Headers: string[];
+  sheet1Rows: (string | number)[][];
+  sheet2Headers: string[];
+  sheet2Rows: (string | number)[][];
+  sheet3Rows: (string | number)[][];
+  tsvSheet1: string;
+  tsvSheet2: string;
+  tsvSheet3: string;
+  tsvAll: string;
+}
+
+export interface ExportedExcelResult extends ExamReportSheetData {
+  downloadUrl: string;
+  buffer: ArrayBuffer;
+  tsvContent: string;
+  rowCount: number;
+}
+
 /**
- * Xuất báo cáo kết quả thi hoàn chỉnh 3 Sheet
+ * Sao chép đồng bộ (Synchronous Copy) hoạt động 100% bên trong iframe của AI Studio
+ * ngay khi người dùng nhấp chuột vào liên kết mở Google Sheet
  */
-export async function exportExamResultsExcel(
+export function copyTextToClipboardSync(text: string): boolean {
+  if (typeof document === 'undefined') return false;
+  let copied = false;
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+  } catch {
+    copied = false;
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {
+      // ignore
+    });
+    copied = true;
+  }
+
+  return copied;
+}
+
+/**
+ * Chuẩn bị đồng bộ dữ liệu 3 trang tính (Sheet 1, Sheet 2, Sheet 3) và chuỗi TSV chuẩn Google Sheets
+ */
+export function buildExamReportSheetData(
   examTitle: string,
   summary: ExamResultSummary,
   sessions: StudentExamSession[],
   students: Student[],
   papers: Record<string, StudentExamPaper>,
-  questions: Question[]
-): Promise<void> {
+  questions: Question[],
+  classFilter?: string
+): ExamReportSheetData {
   const studentMap = new Map(students.map((s) => [s.id, s]));
   const questionMap = new Map(questions.map((q) => [q.id, q]));
+
+  const isSingleClass = Boolean(classFilter && classFilter !== 'all');
+  const classScopeTitle = isSingleClass
+    ? `LỚP ${classFilter}`
+    : summary.className
+    ? `LỚP: ${summary.className}`
+    : 'TẤT CẢ CÁC LỚP';
+
+  const sheet1Headers = [
+    'STT',
+    'Mã học sinh',
+    'Họ và tên',
+    'Lớp',
+    'Mã đề',
+    'Số câu đúng',
+    'Số câu sai',
+    'Số câu bỏ trống',
+    'Điểm số (thang 10)',
+    'Lượt thi',
+    'Thời gian nộp',
+  ];
 
   // SHEET 1: BẢNG TỔNG HỢP KẾT QUẢ
   const sheet1Rows: (string | number)[][] =
@@ -707,6 +784,14 @@ export async function exportExamResultsExcel(
               ? savedScore.score
               : 'Chưa nộp';
           const submittedAtIso = sess.submittedAt || savedScore?.submittedAt;
+          const attemptNum = sess.attemptCount || savedScore?.attemptCount || 1;
+          const attemptText =
+            attemptNum >= 2
+              ? sess.previousScore !== undefined
+                ? `Lần ${attemptNum} (Lần 1: ${sess.previousScore}đ)`
+                : `Lần ${attemptNum}`
+              : 'Lần 1';
+
           return [
             idx + 1,
             student?.studentIdCode || `HS7${String(idx + 1).padStart(3, '0')}`,
@@ -717,16 +802,29 @@ export async function exportExamResultsExcel(
             sess.wrongCount ?? savedScore?.wrongCount ?? 0,
             sess.unansweredCount ?? savedScore?.unansweredCount ?? 0,
             finalScore,
+            attemptText,
             submittedAtIso
               ? new Date(submittedAtIso).toLocaleTimeString('vi-VN')
               : sess.status === 'dang_lam_bai'
               ? 'Đang làm'
+              : attemptNum >= 2
+              ? 'Chờ thi lại (Lần 2)'
               : 'Chưa thi',
           ];
         })
-      : [['-', '-', 'Chưa có học sinh dự thi', '-', '-', 0, 0, 0, 'Chưa nộp', '-']];
+      : [['-', '-', 'Chưa có học sinh dự thi', '-', '-', 0, 0, 0, 'Chưa nộp', 'Lần 1', '-']];
 
-  // SHEET 2: BẢNG CHI TIẾT CÂU TRẢ LỜI (Hỗ trợ đầy đủ 3 dạng: Nhiều lựa chọn, Đúng/Sai, Ghép đôi)
+  const sheet2Headers = [
+    'Học sinh',
+    'Lớp',
+    'Mã đề',
+    'Câu hỏi',
+    'Phương án đã chọn',
+    'Đáp án đúng',
+    'Kết quả',
+  ];
+
+  // SHEET 2: BẢNG CHI TIẾT CÂU TRẢ LỜI
   const sheet2Rows: (string | number)[][] = [];
   const defaultQuestionOrder = summary.questionStats.map((qs) => qs.questionId);
 
@@ -818,9 +916,10 @@ export async function exportExamResultsExcel(
   // SHEET 3: THỐNG KÊ KỲ THI
   const sheet3Rows: (string | number)[][] = [
     ['Chỉ số tổng hợp', 'Giá trị', '', ''],
+    ['Phạm vi thống kê', classScopeTitle, '', ''],
     ['Tổng số học sinh dự thi', summary.totalStudents, '', ''],
     ['Số học sinh đã nộp bài', summary.submittedCount, '', ''],
-    ['Điểm trung bình toàn lớp', summary.averageScore, '', ''],
+    ['Điểm trung bình', summary.averageScore, '', ''],
     ['Điểm cao nhất', summary.highestScore, '', ''],
     ['Điểm thấp nhất', summary.lowestScore, '', ''],
     ['Học lực Giỏi (8.0 - 10.0)', `${summary.excellentCount} học sinh`, '', ''],
@@ -848,49 +947,109 @@ export async function exportExamResultsExcel(
     ]);
   });
 
+  const cleanCell = (cell: string | number) =>
+    String(cell ?? '').replace(/[\t\r\n]+/g, ' ');
+
+  const tsvSheet1 = [
+    [`BÁO CÁO KẾT QUẢ KỲ THI: ${examTitle.toUpperCase()} (${classScopeTitle})`].join('\t'),
+    [
+      `Tổng số HS: ${summary.totalStudents}`,
+      `Đã nộp: ${summary.submittedCount}`,
+      `Điểm TB: ${summary.averageScore}`,
+      `Cao nhất: ${summary.highestScore}`,
+      `Thấp nhất: ${summary.lowestScore}`,
+    ].join('\t'),
+    '',
+    sheet1Headers.join('\t'),
+    ...sheet1Rows.map((row) => row.map(cleanCell).join('\t')),
+  ].join('\n');
+
+  const tsvSheet2 = [
+    [`CHI TIẾT CÂU TRẢ LỜI CỦA HỌC SINH - ${examTitle.toUpperCase()} (${classScopeTitle})`].join('\t'),
+    '',
+    sheet2Headers.join('\t'),
+    ...sheet2Rows.map((row) => row.map(cleanCell).join('\t')),
+  ].join('\n');
+
+  const tsvSheet3 = [
+    [`THỐNG KÊ PHỔ ĐIỂM & TỶ LỆ CÂU ĐÚNG - ${examTitle.toUpperCase()} (${classScopeTitle})`].join('\t'),
+    '',
+    ...sheet3Rows.map((row) => row.map(cleanCell).join('\t')),
+  ].join('\n');
+
+  const classFilePart = isSingleClass ? `_Lop_${classFilter}` : '_Tat_Ca_Lop';
+  const safeFilename = sanitizeDownloadFilename(`Ket_Qua_${examTitle}${classFilePart}.xlsx`);
+
+  return {
+    filename: safeFilename,
+    classScopeTitle,
+    classLabel: isSingleClass ? `Lớp ${classFilter}` : 'Tất cả các lớp',
+    sheet1Headers,
+    sheet1Rows,
+    sheet2Headers,
+    sheet2Rows,
+    sheet3Rows,
+    tsvSheet1,
+    tsvSheet2,
+    tsvSheet3,
+    tsvAll: `${tsvSheet1}\n\n${tsvSheet3}`,
+  };
+}
+
+/**
+ * Xuất báo cáo kết quả thi hoàn chỉnh 3 Sheet (hỗ trợ xuất tất cả các lớp hoặc từng lớp riêng biệt)
+ */
+export async function exportExamResultsExcel(
+  examTitle: string,
+  summary: ExamResultSummary,
+  sessions: StudentExamSession[],
+  students: Student[],
+  papers: Record<string, StudentExamPaper>,
+  questions: Question[],
+  classFilter?: string
+): Promise<ExportedExcelResult> {
+  const sheetData = buildExamReportSheetData(
+    examTitle,
+    summary,
+    sessions,
+    students,
+    papers,
+    questions,
+    classFilter
+  );
+
   const buffer = await buildXlsxBuffer([
     {
       name: 'BangTongHopDiem',
-      title: `BÁO CÁO KẾT QUẢ KỲ THI: ${examTitle.toUpperCase()}`,
-      headers: [
-        'STT',
-        'Mã học sinh',
-        'Họ và tên',
-        'Lớp',
-        'Mã đề',
-        'Số câu đúng',
-        'Số câu sai',
-        'Số câu bỏ trống',
-        'Điểm số (thang 10)',
-        'Thời gian nộp',
-      ],
-      rows: sheet1Rows,
-      columnWidths: [8, 14, 26, 10, 12, 14, 14, 16, 18, 18],
+      title: `BÁO CÁO KẾT QUẢ KỲ THI: ${examTitle.toUpperCase()} (${sheetData.classScopeTitle})`,
+      headers: sheetData.sheet1Headers,
+      rows: sheetData.sheet1Rows,
+      columnWidths: [8, 14, 26, 10, 12, 14, 14, 16, 18, 18, 18],
     },
     {
       name: 'ChiTietCauTraLoi',
-      title: `CHI TIẾT PHƯƠNG ÁN CHỌN CỦA TỪNG HỌC SINH - ${examTitle}`,
-      headers: [
-        'Học sinh',
-        'Lớp',
-        'Mã đề',
-        'Câu hỏi',
-        'Phương án đã chọn',
-        'Đáp án đúng',
-        'Kết quả',
-      ],
-      rows: sheet2Rows,
+      title: `CHI TIẾT PHƯƠNG ÁN CHỌN CỦA TỪNG HỌC SINH - ${examTitle} (${sheetData.classScopeTitle})`,
+      headers: sheetData.sheet2Headers,
+      rows: sheetData.sheet2Rows,
       columnWidths: [24, 10, 12, 35, 26, 26, 14],
     },
     {
       name: 'ThongKePhoDiem',
-      title: 'BẢNG THỐNG KÊ PHỔ ĐIỂM VÀ TỶ LỆ CÂU ĐÚNG',
-      rows: sheet3Rows,
+      title: `BẢNG THỐNG KÊ PHỔ ĐIỂM VÀ TỶ LỆ CÂU ĐÚNG (${sheetData.classScopeTitle})`,
+      rows: sheetData.sheet3Rows,
       columnWidths: [26, 45, 22, 18],
     },
   ]);
 
-  triggerDownload(buffer, `Ket_Qua_${examTitle}.xlsx`);
+  const downloadUrl = triggerDownload(buffer, sheetData.filename);
+
+  return {
+    ...sheetData,
+    downloadUrl,
+    buffer,
+    tsvContent: sheetData.tsvAll,
+    rowCount: sessions.length,
+  };
 }
 
 function sanitizeDownloadFilename(rawName: string): string {
@@ -902,9 +1061,11 @@ function sanitizeDownloadFilename(rawName: string): string {
   return cleaned.toLowerCase().endsWith('.xlsx') ? cleaned : `${cleaned}.xlsx`;
 }
 
-function triggerDownload(buffer: ArrayBuffer, filename: string): void {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+export function triggerDownload(buffer: ArrayBuffer, filename: string): string {
   const safeFilename = sanitizeDownloadFilename(filename);
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return '';
+  }
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
@@ -920,11 +1081,11 @@ function triggerDownload(buffer: ArrayBuffer, filename: string): void {
       if (anchor.parentNode) {
         anchor.parentNode.removeChild(anchor);
       }
-      window.URL.revokeObjectURL(url);
     } catch {
       // ignore
     }
-  }, 15000);
+  }, 5000);
+  return url;
 }
 
 /**

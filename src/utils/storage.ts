@@ -1068,13 +1068,29 @@ export class AppStorage {
 
     const localStudents = safeGetItem<Student[]>(KEYS.STUDENTS, []);
     const localById = new Map(localStudents.map((s) => [s.id, s]));
+    const sessions = this.getSessions();
 
     const merged = remoteStudents.map((rs) => {
       const localSt = localById.get(rs.id);
-      const combinedScores = {
+      const combinedScores: Record<string, any> = {
         ...(localSt?.examScores || {}),
         ...(rs.examScores || {}),
       };
+
+      // Nếu học sinh đã được Giáo viên cấp quyền Thi lại (retakeGrantedAt) và chưa nộp bài lần 2,
+      // không ghi đè lại điểm cũ (< 5.0) từ bản ghi trước thời điểm cấp quyền thi lại
+      for (const [exId, rec] of Object.entries(combinedScores)) {
+        const sess = sessions[`${rs.id}_${exId}`];
+        if (
+          sess &&
+          sess.status !== 'da_nop_bai' &&
+          sess.retakeGrantedAt &&
+          (!rec?.submittedAt || String(rec.submittedAt) < String(sess.retakeGrantedAt))
+        ) {
+          delete combinedScores[exId];
+        }
+      }
+
       const sorted = Object.values(combinedScores).sort((a, b) =>
         String(b?.submittedAt || '').localeCompare(String(a?.submittedAt || ''))
       );
@@ -1089,7 +1105,12 @@ export class AppStorage {
               latestExamTitle: latest.examTitle,
               latestSubmittedAt: latest.submittedAt,
             }
-          : {}),
+          : {
+              latestScore: undefined,
+              latestExamId: undefined,
+              latestExamTitle: undefined,
+              latestSubmittedAt: undefined,
+            }),
       };
     });
 
@@ -1145,6 +1166,15 @@ export class AppStorage {
       const sessionKey = `${resolvedStudentId}_${sub.examId}`;
       const existingSess = sessions[sessionKey];
 
+      // Nếu học sinh đã được cấp quyền Thi lại lần 2 (retakeGrantedAt) và bản ghi nộp bài này cũ hơn thời điểm cấp quyền thi lại thì bỏ qua
+      if (
+        existingSess?.retakeGrantedAt &&
+        existingSess.status !== 'da_nop_bai' &&
+        (!sub.submittedAt || String(sub.submittedAt) < String(existingSess.retakeGrantedAt))
+      ) {
+        continue;
+      }
+
       const isModified =
         !existingSess ||
         existingSess.status !== 'da_nop_bai' ||
@@ -1187,6 +1217,109 @@ export class AppStorage {
     }
 
     return changed;
+  }
+
+  /**
+   * Cấp quyền Thi lại (Lần 2) cho danh sách học sinh có điểm < 5.0 trong một kỳ thi:
+   * - Đảo lại mã đề / câu hỏi mới cho lần thi thứ 2
+   * - Đặt lại phiên thi về trạng thái 'chua_dang_nhap' với thời gian đầy đủ, lưu lại previousScore & attemptCount = 2
+   * - Xóa điểm lần 1 (< 5.0) khỏi student.examScores[examId] để học sinh vào thi lại ngay
+   */
+  public allowStudentRetakeExam(examId: string, studentIds: string[]): Student[] {
+    if (!examId || !Array.isArray(studentIds) || studentIds.length === 0) return [];
+
+    const idSet = new Set(studentIds);
+    const exams = this.getExams();
+    const exam = exams.find((e) => e.id === examId);
+    if (!exam) return [];
+
+    const questions = this.getQuestions();
+    const questionMap = new Map(questions.map((q) => [q.id, q]));
+    const examQuestions = (exam.questionIds || [])
+      .map((id) => questionMap.get(id))
+      .filter((q): q is Question => Boolean(q));
+
+    const papers = this.getPapers();
+    const sessions = this.getSessions();
+    const students = this.getStudents();
+    const nowIso = new Date().toISOString();
+    const resetStudents: Student[] = [];
+
+    const updatedStudents = students.map((student, idx) => {
+      if (!idSet.has(student.id)) return student;
+
+      const sessionKey = `${student.id}_${exam.id}`;
+      const existingSess = sessions[sessionKey];
+      const existingScoreRecord = student.examScores?.[exam.id];
+      const previousScore =
+        existingSess?.score !== undefined
+          ? existingSess.score
+          : existingScoreRecord?.score !== undefined
+          ? existingScoreRecord.score
+          : existingSess?.previousScore;
+
+      // Tạo mã đề đảo mới cho lần thi thứ 2
+      if (examQuestions.length > 0) {
+        papers[sessionKey] = createStudentExamPaper(
+          student.id,
+          exam.id,
+          idx + Math.floor(Math.random() * 20) + 1,
+          examQuestions,
+          exam.shuffleQuestions,
+          exam.shuffleOptions
+        );
+      }
+
+      const nextAttemptCount = Math.max(2, (existingSess?.attemptCount || 1) + 1);
+
+      sessions[sessionKey] = {
+        id: `sess_${student.id}_${exam.id}`,
+        examId: exam.id,
+        studentId: student.id,
+        paperCode: papers[sessionKey]?.paperCode || existingSess?.paperCode || 'MD702',
+        status: 'chua_dang_nhap',
+        startedAt: undefined,
+        submittedAt: undefined,
+        timeRemainingSeconds: exam.durationMinutes * 60,
+        currentQuestionIndex: 0,
+        answers: {},
+        score: undefined,
+        correctCount: undefined,
+        wrongCount: undefined,
+        unansweredCount: undefined,
+        attemptCount: nextAttemptCount,
+        previousScore,
+        retakeGrantedAt: nowIso,
+        lastHeartbeat: nowIso,
+        workstationIp: existingSess?.workstationIp,
+      };
+
+      const nextExamScores = { ...(student.examScores || {}) };
+      delete nextExamScores[exam.id];
+
+      const remainingRecords = Object.values(nextExamScores).sort((a, b) =>
+        String(b?.submittedAt || '').localeCompare(String(a?.submittedAt || ''))
+      );
+      const latest = remainingRecords[0];
+
+      const updatedStudent: Student = {
+        ...student,
+        examScores: nextExamScores,
+        latestScore: latest ? latest.score : undefined,
+        latestExamId: latest ? latest.examId : undefined,
+        latestExamTitle: latest ? latest.examTitle : undefined,
+        latestSubmittedAt: latest ? latest.submittedAt : undefined,
+      };
+      resetStudents.push(updatedStudent);
+      return updatedStudent;
+    });
+
+    this.savePapers(papers);
+    safeSetItem(KEYS.SESSIONS, sessions);
+    safeSetItem(KEYS.STUDENTS, updatedStudents);
+    this.markLocalEditAndSync();
+
+    return resetStudents;
   }
 
   // --- ACTIONS ---

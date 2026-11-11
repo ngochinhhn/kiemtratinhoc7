@@ -27,6 +27,7 @@ import {
   FIRESTORE_PRICING_URL,
   FIRESTORE_QUOTA_UPGRADE_URL,
   resetFirestoreQuotaCircuitBreaker,
+  resetStudentSubmissionForRetake,
   signInTeacherWithGoogle,
   signOutFirebase,
   subscribeAllFirestoreData,
@@ -485,6 +486,18 @@ export default function App() {
     void syncSessionToFirestore(session);
   };
 
+  // Cho phép học sinh có điểm < 5.0 thi lại lần thứ 2
+  const handleAllowStudentRetake = (examId: string, studentIds: string[]) => {
+    const resetStudents = appStorage.allowStudentRetakeExam(examId, studentIds);
+    reloadData();
+    if (resetStudents.length > 0) {
+      void resetStudentSubmissionForRetake(examId, resetStudents);
+      if (currentRole === 'giaovien') {
+        setHasUnsavedChanges(true);
+      }
+    }
+  };
+
   // Cập nhật cấu hình hệ thống
   const handleSaveConfig = (newConfig: SystemConfig) => {
     appStorage.saveConfig(newConfig);
@@ -800,6 +813,7 @@ export default function App() {
                   sessions={sessions}
                   questions={questions}
                   onSelectExam={(id) => setSelectedExamId(id)}
+                  onAllowRetake={handleAllowStudentRetake}
                 />
               )}
 
