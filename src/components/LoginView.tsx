@@ -617,7 +617,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         {/* Chân cửa sổ đăng nhập: Nút mở Trợ giúp & Thông tin tác giả */}
         <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
           <span className="text-slate-600 font-medium truncate">
-            Tác giả: <strong>Thầy giáo Ngô Văn Chinh</strong>
+            Tác giả: <strong>Cô giáo Hoàng Thị Thùy Trang</strong>
           </span>
           <button
             type="button"

@@ -98,6 +98,18 @@ export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
+  // Tích hợp AI Gemini tạo câu hỏi trong phần Thêm câu hỏi mới
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState(true);
+  const [aiIdea, setAiIdea] = useState('');
+  const [aiCount, setAiCount] = useState<number>(3);
+  const [aiThemeName, setAiThemeName] = useState<string>('Chủ đề 1: Máy tính và cộng đồng');
+  const [aiLessonName, setAiLessonName] = useState<string>('Bài 1: Thiết bị vào – ra');
+  const [aiQuestionType, setAiQuestionType] = useState<QuestionType | 'mixed'>('multiple_choice');
+  const [aiCognitiveLevel, setAiCognitiveLevel] = useState<CognitiveLevel | 'mixed'>('thong_hieu');
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [aiGeneratedQuestions, setAiGeneratedQuestions] = useState<Question[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   // Modal nhập PDF
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfImportMode, setPdfImportMode] = useState<'upload_file' | 'raw_text'>('upload_file');
@@ -122,6 +134,64 @@ export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
     setTimeout(() => {
       setNotification((prev) => (prev === msg ? null : prev));
     }, 5000);
+  };
+
+  const handleGenerateQuestionsWithAi = async () => {
+    const trimmedIdea = aiIdea.trim();
+    if (!trimmedIdea) {
+      setAiError('Vui lòng nhập ý tưởng hoặc nội dung trọng tâm để mô hình AI Gemini tạo câu hỏi.');
+      return;
+    }
+    const safeCount = Math.max(1, Math.min(20, Number(aiCount) || 3));
+    setIsGeneratingAi(true);
+    setAiError(null);
+
+    try {
+      const res = await fetch('/api/gemini/generate-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: trimmedIdea,
+          count: safeCount,
+          themeName: aiThemeName,
+          lessonName: aiLessonName,
+          questionType: aiQuestionType,
+          cognitiveLevel: aiCognitiveLevel,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok || !Array.isArray(data.questions)) {
+        throw new Error(data?.error || 'Không thể tạo câu hỏi từ mô hình AI Gemini.');
+      }
+      setAiGeneratedQuestions(data.questions);
+      if (data.questions.length > 0 && editingQuestion && !editingQuestion.content.trim()) {
+        setEditingQuestion(data.questions[0]);
+      }
+    } catch (err: any) {
+      setAiError(
+        err?.message || 'Đã xảy ra lỗi khi kết nối tới dịch vụ AI Gemini. Vui lòng thử lại.'
+      );
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
+
+  const handleSaveAllAiQuestions = () => {
+    if (aiGeneratedQuestions.length === 0) return;
+    const nowIso = new Date().toISOString();
+    const prepared = aiGeneratedQuestions.map((q, idx) => ({
+      ...q,
+      id: q.id || `ai_gemini_${Date.now()}_${idx + 1}`,
+      reviewStatus: 'da_kiem_duyet' as ReviewStatus,
+      updatedAt: nowIso,
+    }));
+    onSaveQuestions([...prepared, ...questions]);
+    setAiGeneratedQuestions([]);
+    setIsAddModalOpen(false);
+    setEditingQuestion(null);
+    showToast(
+      `Đã tạo bằng AI Gemini và thêm thành công ${prepared.length} câu hỏi mới vào Ngân hàng câu hỏi! (Hãy bấm "Lưu Data" để lưu & đồng bộ)`
+    );
   };
 
   // Danh sách Chủ đề động dựa trên câu hỏi hiện có + khung chương trình chuẩn
@@ -605,21 +675,86 @@ export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
             <span>Upload câu hỏi từ PDF</span>
           </button>
 
+          {/* Nút Tạo câu hỏi bằng AI (Gemini) */}
           <button
             type="button"
+            data-testid="btn-open-ai-question-generator"
             onClick={() => {
               setModalError(null);
+              setAiError(null);
+              setIsAiPanelOpen(true);
               const defaultType: QuestionType =
                 selectedQuestionType !== 'all' ? selectedQuestionType : 'multiple_choice';
+              const initialTheme =
+                selectedTheme !== 'Tất cả chủ đề'
+                  ? selectedTheme
+                  : 'Chủ đề 1: Máy tính và cộng đồng';
+              setAiThemeName(initialTheme);
+              setAiQuestionType(defaultType);
               const now = Date.now();
               setEditingQuestion({
                 id: `manual_${now}`,
                 type: defaultType,
                 themeId: 'chu_de_1',
-                themeName:
-                  selectedTheme !== 'Tất cả chủ đề'
-                    ? selectedTheme
-                    : 'Chủ đề 1: Máy tính và cộng đồng',
+                themeName: initialTheme,
+                lessonId: 'bai_1',
+                lessonName: 'Bài 1: Thiết bị vào – ra',
+                content: '',
+                imageUrl: undefined,
+                imageCaption: undefined,
+                options: [
+                  { id: `opt_${now}_a`, label: 'A', content: '' },
+                  { id: `opt_${now}_b`, label: 'B', content: '' },
+                  { id: `opt_${now}_c`, label: 'C', content: '' },
+                  { id: `opt_${now}_d`, label: 'D', content: '' },
+                ],
+                correctOptionId: '',
+                statements: [
+                  { id: `stmt_${now}_a`, label: 'a', content: '', isTrue: true },
+                  { id: `stmt_${now}_b`, label: 'b', content: '', isTrue: false },
+                  { id: `stmt_${now}_c`, label: 'c', content: '', isTrue: true },
+                  { id: `stmt_${now}_d`, label: 'd', content: '', isTrue: false },
+                ],
+                matchingPairs: [
+                  { id: `pair_${now}_1`, leftLabel: '1', leftContent: '', rightLabel: 'A', rightContent: '' },
+                  { id: `pair_${now}_2`, leftLabel: '2', leftContent: '', rightLabel: 'B', rightContent: '' },
+                  { id: `pair_${now}_3`, leftLabel: '3', leftContent: '', rightLabel: 'C', rightContent: '' },
+                  { id: `pair_${now}_4`, leftLabel: '4', leftContent: '', rightLabel: 'D', rightContent: '' },
+                ],
+                cognitiveLevel: 'nhan_biet',
+                reviewStatus: 'da_kiem_duyet',
+                sourcePage: 1,
+                sourceBook: 'SBT Tin học 7 - KNTT',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              });
+              setIsAddModalOpen(true);
+            }}
+            className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Tạo câu hỏi bằng AI</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setModalError(null);
+              setAiError(null);
+              const defaultType: QuestionType =
+                selectedQuestionType !== 'all' ? selectedQuestionType : 'multiple_choice';
+              const initialTheme =
+                selectedTheme !== 'Tất cả chủ đề'
+                  ? selectedTheme
+                  : 'Chủ đề 1: Máy tính và cộng đồng';
+              setAiThemeName(initialTheme);
+              setAiQuestionType(defaultType);
+              const now = Date.now();
+              setEditingQuestion({
+                id: `manual_${now}`,
+                type: defaultType,
+                themeId: 'chu_de_1',
+                themeName: initialTheme,
                 lessonId: 'bai_1',
                 lessonName: 'Bài 1: Thiết bị vào – ra',
                 content: '',
@@ -1355,6 +1490,245 @@ export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
             )}
 
             <div className="space-y-3 text-xs">
+              {/* KHUNG TÍCH HỢP MÔ HÌNH AI GEMINI TẠO CÂU HỎI TỰ ĐỘNG */}
+              <div
+                data-testid="ai-question-generator-panel"
+                className="bg-purple-50/70 border border-purple-200 rounded-xl p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center shrink-0">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs text-purple-950">
+                        Tạo câu hỏi bằng AI (Tích hợp mô hình Gemini)
+                      </h4>
+                      <p className="text-[11px] text-purple-700">
+                        Nhập ý tưởng, số lượng câu, chủ đề để AI Gemini tự động biên soạn câu hỏi Tin học 7 chuẩn chương trình
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAiPanelOpen((prev) => !prev)}
+                    className="text-[11px] font-bold text-purple-700 hover:text-purple-950 px-2.5 py-1 rounded-lg bg-white border border-purple-200"
+                  >
+                    {isAiPanelOpen ? 'Thu gọn AI' : 'Mở công cụ AI'}
+                  </button>
+                </div>
+
+                {isAiPanelOpen && (
+                  <div className="space-y-3 pt-2 border-t border-purple-200/80">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">
+                        Ý tưởng / Nội dung trọng tâm câu hỏi <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        rows={2}
+                        data-testid="ai-input-idea"
+                        value={aiIdea}
+                        onChange={(e) => setAiIdea(e.target.value)}
+                        placeholder="Ví dụ: Phân biệt thiết bị vào và thiết bị ra, tình huống sử dụng chuột, bàn phím, máy in trong thực tế..."
+                        className="w-full px-3 py-2 border border-purple-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">
+                          Số lượng câu hỏi (1–20)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          data-testid="ai-input-count"
+                          value={aiCount}
+                          onChange={(e) =>
+                            setAiCount(Math.max(1, Math.min(20, Number(e.target.value) || 1)))
+                          }
+                          className="w-full px-3 py-1.5 border border-purple-300 rounded-lg bg-white font-bold text-purple-900"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block font-bold text-slate-700 mb-1">
+                          Chủ đề chương trình Tin học 7
+                        </label>
+                        <select
+                          data-testid="ai-select-theme"
+                          value={aiThemeName}
+                          onChange={(e) => {
+                            setAiThemeName(e.target.value);
+                            setEditingQuestion({
+                              ...editingQuestion,
+                              themeName: e.target.value,
+                            });
+                          }}
+                          className="w-full px-2.5 py-1.5 border border-purple-300 rounded-lg bg-white"
+                        >
+                          {DEFAULT_CURRICULUM_THEMES.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">
+                          Bài học cụ thể
+                        </label>
+                        <input
+                          type="text"
+                          data-testid="ai-input-lesson"
+                          value={aiLessonName}
+                          onChange={(e) => {
+                            setAiLessonName(e.target.value);
+                            setEditingQuestion({
+                              ...editingQuestion,
+                              lessonName: e.target.value,
+                            });
+                          }}
+                          placeholder="VD: Bài 1: Thiết bị vào – ra"
+                          className="w-full px-2.5 py-1.5 border border-purple-300 rounded-lg bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">
+                          Dạng câu hỏi
+                        </label>
+                        <select
+                          data-testid="ai-select-qtype"
+                          value={aiQuestionType}
+                          onChange={(e) =>
+                            setAiQuestionType(e.target.value as QuestionType | 'mixed')
+                          }
+                          className="w-full px-2.5 py-1.5 border border-purple-300 rounded-lg bg-white"
+                        >
+                          <option value="multiple_choice">Nhiều lựa chọn (A, B, C, D)</option>
+                          <option value="true_false">Đúng / Sai (a, b, c, d)</option>
+                          <option value="matching">Ghép đôi (Cột A - Cột B)</option>
+                          <option value="mixed">Kết hợp cả 3 dạng</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">
+                          Mức độ nhận thức
+                        </label>
+                        <select
+                          data-testid="ai-select-level"
+                          value={aiCognitiveLevel}
+                          onChange={(e) =>
+                            setAiCognitiveLevel(e.target.value as CognitiveLevel | 'mixed')
+                          }
+                          className="w-full px-2.5 py-1.5 border border-purple-300 rounded-lg bg-white"
+                        >
+                          <option value="nhan_biet">Nhận biết</option>
+                          <option value="thong_hieu">Thông hiểu</option>
+                          <option value="van_dung">Vận dụng</option>
+                          <option value="van_dung_cao">Vận dụng cao</option>
+                          <option value="mixed">Kết hợp các mức độ</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {aiError && (
+                      <div
+                        data-testid="ai-generator-error"
+                        className="bg-red-50 border border-red-200 text-red-700 p-2.5 rounded-lg text-xs font-medium"
+                      >
+                        {aiError}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <button
+                        type="button"
+                        data-testid="btn-generate-ai-questions"
+                        disabled={isGeneratingAi}
+                        onClick={handleGenerateQuestionsWithAi}
+                        className="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-400 text-white font-bold px-4 py-2 rounded-lg flex items-center space-x-1.5 shadow-sm transition-colors"
+                      >
+                        {isGeneratingAi ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>AI Gemini đang tạo {aiCount} câu hỏi...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4" />
+                            <span>Tạo câu hỏi bằng AI ({aiCount} câu)</span>
+                          </>
+                        )}
+                      </button>
+
+                      {aiGeneratedQuestions.length > 0 && (
+                        <button
+                          type="button"
+                          data-testid="btn-save-all-ai-questions"
+                          onClick={handleSaveAllAiQuestions}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg flex items-center space-x-1.5 shadow-sm transition-colors"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>
+                            Thêm tất cả {aiGeneratedQuestions.length} câu hỏi AI vào Ngân hàng
+                          </span>
+                        </button>
+                      )}
+                    </div>
+
+                    {aiGeneratedQuestions.length > 0 && (
+                      <div
+                        data-testid="ai-generated-questions-preview"
+                        className="bg-white border border-purple-200 rounded-lg p-3 space-y-2 max-h-56 overflow-y-auto"
+                      >
+                        <div className="text-[11px] font-bold text-purple-900 flex items-center justify-between">
+                          <span>
+                            Kết quả do AI Gemini tạo ({aiGeneratedQuestions.length} câu hỏi):
+                          </span>
+                          <span className="text-slate-500 font-normal">
+                            Nhấp &ldquo;Nạp vào khung sửa&rdquo; để chỉnh sửa chi tiết từng câu
+                          </span>
+                        </div>
+                        {aiGeneratedQuestions.map((genQ, idx) => (
+                          <div
+                            key={genQ.id}
+                            className="p-2.5 rounded-lg border border-slate-200 bg-slate-50 flex items-start justify-between gap-2"
+                          >
+                            <div className="space-y-1 flex-1">
+                              <div className="font-bold text-slate-800">
+                                Câu AI #{idx + 1}: {genQ.content}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                Chủ đề: {genQ.themeName} • Dạng:{' '}
+                                {genQ.type === 'true_false'
+                                  ? 'Đúng/Sai'
+                                  : genQ.type === 'matching'
+                                    ? 'Ghép đôi'
+                                    : 'Nhiều lựa chọn'}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setEditingQuestion(genQ)}
+                              className="px-2.5 py-1 rounded bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold text-[11px] shrink-0"
+                            >
+                              Nạp vào khung sửa
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* CHỌN 1 TRONG 3 DẠNG CÂU HỎI TRẮC NGHIỆM */}
               <div className="space-y-1.5">
                 <label className="block font-bold text-slate-700">

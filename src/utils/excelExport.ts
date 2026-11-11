@@ -293,6 +293,7 @@ export async function readZipTextFiles(
 
 function escapeXml(val: string): string {
   return String(val)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -335,7 +336,7 @@ function renderCellXml(
   if (typeof value === 'number' && Number.isFinite(value)) {
     return `<c r="${ref}" s="${styleIndex}"><v>${value}</v></c>`;
   }
-  return `<c r="${ref}" s="${styleIndex}" t="inlineStr"><is><t>${escapeXml(
+  return `<c r="${ref}" s="${styleIndex}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(
     String(value)
   )}</t></is></c>`;
 }
@@ -694,54 +695,125 @@ export async function exportExamResultsExcel(
   const questionMap = new Map(questions.map((q) => [q.id, q]));
 
   // SHEET 1: BẢNG TỔNG HỢP KẾT QUẢ
-  const sheet1Rows: (string | number)[][] = sessions.map((sess, idx) => {
-    const student = studentMap.get(sess.studentId);
-    return [
-      idx + 1,
-      student?.studentIdCode || '',
-      student?.fullName || 'Học sinh',
-      student?.className || '',
-      sess.paperCode,
-      sess.correctCount ?? 0,
-      sess.wrongCount ?? 0,
-      sess.unansweredCount ?? 0,
-      sess.score !== undefined ? sess.score : 'Chưa nộp',
-      sess.submittedAt
-        ? new Date(sess.submittedAt).toLocaleTimeString('vi-VN')
-        : 'Đang làm',
-    ];
-  });
+  const sheet1Rows: (string | number)[][] =
+    sessions.length > 0
+      ? sessions.map((sess, idx) => {
+          const student = studentMap.get(sess.studentId);
+          const savedScore = student?.examScores?.[sess.examId];
+          const finalScore =
+            sess.score !== undefined
+              ? sess.score
+              : savedScore?.score !== undefined
+              ? savedScore.score
+              : 'Chưa nộp';
+          const submittedAtIso = sess.submittedAt || savedScore?.submittedAt;
+          return [
+            idx + 1,
+            student?.studentIdCode || `HS7${String(idx + 1).padStart(3, '0')}`,
+            student?.fullName || 'Học sinh',
+            student?.className || '',
+            sess.paperCode || savedScore?.paperCode || 'MD701',
+            sess.correctCount ?? savedScore?.correctCount ?? 0,
+            sess.wrongCount ?? savedScore?.wrongCount ?? 0,
+            sess.unansweredCount ?? savedScore?.unansweredCount ?? 0,
+            finalScore,
+            submittedAtIso
+              ? new Date(submittedAtIso).toLocaleTimeString('vi-VN')
+              : sess.status === 'dang_lam_bai'
+              ? 'Đang làm'
+              : 'Chưa thi',
+          ];
+        })
+      : [['-', '-', 'Chưa có học sinh dự thi', '-', '-', 0, 0, 0, 'Chưa nộp', '-']];
 
-  // SHEET 2: BẢNG CHI TIẾT CÂU TRẢ LỜI
+  // SHEET 2: BẢNG CHI TIẾT CÂU TRẢ LỜI (Hỗ trợ đầy đủ 3 dạng: Nhiều lựa chọn, Đúng/Sai, Ghép đôi)
   const sheet2Rows: (string | number)[][] = [];
+  const defaultQuestionOrder = summary.questionStats.map((qs) => qs.questionId);
+
   sessions.forEach((sess) => {
     const student = studentMap.get(sess.studentId);
     const paper = papers[`${sess.studentId}_${sess.examId}`];
-    if (paper) {
-      paper.questionOrder.forEach((qId, qIdx) => {
-        const q = questionMap.get(qId);
-        const ans = sess.answers[qId];
-        const selectedOptId = ans?.selectedOptionId;
-        const isCorrect = selectedOptId === q?.correctOptionId;
+    const qOrder =
+      paper && Array.isArray(paper.questionOrder) && paper.questionOrder.length > 0
+        ? paper.questionOrder
+        : defaultQuestionOrder;
+    const answersMap = sess.answers || {};
 
-        const optMap = new Map(q?.options.map((o) => [o.id, o]));
-        const selectedOpt = selectedOptId
-          ? optMap.get(selectedOptId)?.content || ''
+    qOrder.forEach((qId, qIdx) => {
+      const q = questionMap.get(qId);
+      const ans = answersMap[qId];
+      const qType =
+        q?.type ||
+        (Array.isArray(q?.statements) && q.statements.length > 0
+          ? 'true_false'
+          : Array.isArray(q?.matchingPairs) && q.matchingPairs.length > 0
+          ? 'matching'
+          : 'multiple_choice');
+
+      let selectedText = 'Bỏ trống';
+      let correctText = '';
+      let statusText = 'Chưa trả lời';
+
+      if (qType === 'true_false' && Array.isArray(q?.statements)) {
+        const tfMap = ans?.statementAnswers || {};
+        const hasAny = q.statements.some((st) => typeof tfMap[st.id] === 'boolean');
+        selectedText = hasAny
+          ? q.statements
+              .map((st) => `${st.label}) ${tfMap[st.id] === true ? 'Đ' : tfMap[st.id] === false ? 'S' : '-'}`)
+              .join('; ')
           : 'Bỏ trống';
-        const correctOpt = q ? optMap.get(q.correctOptionId)?.content || '' : '';
+        correctText = q.statements
+          .map((st) => `${st.label}) ${st.isTrue ? 'Đ' : 'S'}`)
+          .join('; ');
+        const allRight =
+          q.statements.length > 0 && q.statements.every((st) => tfMap[st.id] === st.isTrue);
+        statusText = !hasAny ? 'Chưa trả lời' : allRight ? 'ĐÚNG' : 'SAI';
+      } else if (qType === 'matching' && Array.isArray(q?.matchingPairs)) {
+        const mMap = ans?.matchingAnswers || {};
+        const hasAny = q.matchingPairs.some((p) => Boolean(mMap[p.id]));
+        selectedText = hasAny
+          ? q.matchingPairs.map((p) => `${p.leftLabel}-${mMap[p.id] || '?'}`).join('; ')
+          : 'Bỏ trống';
+        correctText = q.matchingPairs.map((p) => `${p.leftLabel}-${p.rightLabel}`).join('; ');
+        const allRight =
+          q.matchingPairs.length > 0 &&
+          q.matchingPairs.every((p) => mMap[p.id] === p.rightLabel);
+        statusText = !hasAny ? 'Chưa trả lời' : allRight ? 'ĐÚNG' : 'SAI';
+      } else {
+        const selectedOptId = ans?.selectedOptionId;
+        const isCorrect = Boolean(selectedOptId && q && selectedOptId === q.correctOptionId);
+        const optionsList = Array.isArray(q?.options) ? q.options : [];
+        const optMap = new Map(optionsList.map((o) => [o.id, o]));
+        selectedText = selectedOptId
+          ? optMap.get(selectedOptId)?.content || selectedOptId
+          : 'Bỏ trống';
+        correctText = q ? optMap.get(q.correctOptionId)?.content || q.correctOptionId : '';
+        statusText = !selectedOptId ? 'Chưa trả lời' : isCorrect ? 'ĐÚNG' : 'SAI';
+      }
 
-        sheet2Rows.push([
-          student?.fullName || '',
-          student?.className || '',
-          sess.paperCode,
-          `Câu ${qIdx + 1}: ${q?.content.substring(0, 40) || ''}...`,
-          selectedOpt,
-          correctOpt,
-          !selectedOptId ? 'Chưa trả lời' : isCorrect ? 'ĐÚNG' : 'SAI',
-        ]);
-      });
-    }
+      sheet2Rows.push([
+        student?.fullName || 'Học sinh',
+        student?.className || '',
+        sess.paperCode || 'MD701',
+        `Câu ${qIdx + 1}: ${(q?.content || '').substring(0, 45)}...`,
+        selectedText,
+        correctText,
+        statusText,
+      ]);
+    });
   });
+
+  if (sheet2Rows.length === 0) {
+    sheet2Rows.push([
+      'Chưa có dữ liệu trả lời chi tiết',
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+    ]);
+  }
 
   // SHEET 3: THỐNG KÊ KỲ THI
   const sheet3Rows: (string | number)[][] = [
@@ -818,20 +890,41 @@ export async function exportExamResultsExcel(
     },
   ]);
 
-  triggerDownload(buffer, `Ket_Qua_${examTitle.replace(/\s+/g, '_')}.xlsx`);
+  triggerDownload(buffer, `Ket_Qua_${examTitle}.xlsx`);
+}
+
+function sanitizeDownloadFilename(rawName: string): string {
+  const cleaned = String(rawName || 'Bao_Cao_Ket_Qua.xlsx')
+    .replace(/[\\/:*?"<>|()[\]]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned.toLowerCase().endsWith('.xlsx') ? cleaned : `${cleaned}.xlsx`;
 }
 
 function triggerDownload(buffer: ArrayBuffer, filename: string): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const safeFilename = sanitizeDownloadFilename(filename);
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
   const url = window.URL.createObjectURL(blob);
   const anchor = document.createElement('a');
+  anchor.style.display = 'none';
   anchor.href = url;
-  anchor.download = filename;
+  anchor.download = safeFilename;
+  document.body.appendChild(anchor);
   anchor.click();
-  window.URL.revokeObjectURL(url);
+  setTimeout(() => {
+    try {
+      if (anchor.parentNode) {
+        anchor.parentNode.removeChild(anchor);
+      }
+      window.URL.revokeObjectURL(url);
+    } catch {
+      // ignore
+    }
+  }, 15000);
 }
 
 /**

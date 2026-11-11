@@ -36,6 +36,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   onSelectExam,
 }) => {
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
+  const [exportStatusBanner, setExportStatusBanner] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   if (!exam) {
     return (
@@ -49,8 +54,68 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
     );
   }
 
-  // Danh sách các session của bài thi này
-  const examSessions = Object.values(sessions).filter((s) => s.examId === exam.id);
+  // Hợp nhất danh sách các session của bài thi này với danh sách học sinh thuộc lớp dự thi (và điểm lưu trong student.examScores)
+  const existingSessionsMap = new Map<string, StudentExamSession>();
+  Object.values(sessions).forEach((s) => {
+    if (s && s.examId === exam.id) {
+      existingSessionsMap.set(s.studentId, s);
+    }
+  });
+
+  const eligibleStudents = students.filter(
+    (st) =>
+      exam.classes.includes(st.className) ||
+      existingSessionsMap.has(st.id) ||
+      st.examScores?.[exam.id] !== undefined
+  );
+
+  const examSessions: StudentExamSession[] = eligibleStudents.map((st, idx) => {
+    const existing = existingSessionsMap.get(st.id);
+    const savedRecord = st.examScores?.[exam.id];
+    if (existing) {
+      if (existing.status !== 'da_nop_bai' && savedRecord?.score !== undefined) {
+        return {
+          ...existing,
+          status: 'da_nop_bai',
+          score: savedRecord.score,
+          correctCount: savedRecord.correctCount ?? existing.correctCount ?? 0,
+          wrongCount: savedRecord.wrongCount ?? existing.wrongCount ?? 0,
+          unansweredCount: savedRecord.unansweredCount ?? existing.unansweredCount ?? 0,
+          submittedAt: savedRecord.submittedAt || existing.submittedAt,
+        };
+      }
+      return existing;
+    }
+    if (savedRecord) {
+      return {
+        id: `sess_${st.id}_${exam.id}`,
+        examId: exam.id,
+        studentId: st.id,
+        paperCode: savedRecord.paperCode || `MD7${String((idx % 24) + 1).padStart(2, '0')}`,
+        status: 'da_nop_bai',
+        timeRemainingSeconds: 0,
+        answers: {},
+        score: savedRecord.score,
+        correctCount: savedRecord.correctCount ?? 0,
+        wrongCount: savedRecord.wrongCount ?? 0,
+        unansweredCount: savedRecord.unansweredCount ?? 0,
+        submittedAt: savedRecord.submittedAt,
+        lastHeartbeat: savedRecord.submittedAt || new Date().toISOString(),
+      };
+    }
+    const paper = papers[`${st.id}_${exam.id}`];
+    return {
+      id: `sess_${st.id}_${exam.id}`,
+      examId: exam.id,
+      studentId: st.id,
+      paperCode: paper?.paperCode || `MD7${String((idx % 24) + 1).padStart(2, '0')}`,
+      status: 'chua_dang_nhap',
+      timeRemainingSeconds: exam.durationMinutes * 60,
+      answers: {},
+      lastHeartbeat: new Date().toISOString(),
+    };
+  });
+
   const examQuestions = questions.filter((q) => exam.questionIds.includes(q.id));
 
   // Tính toán chỉ số thống kê tổng hợp
@@ -65,21 +130,38 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   const studentMap = new Map(students.map((s) => [s.id, s]));
 
   // Xuất file Excel
-  const handleExportExcel = () => {
-    exportExamResultsExcel(
-      exam.title,
-      summary,
-      examSessions,
-      students,
-      papers,
-      questions
-    );
+  const handleExportExcel = async () => {
+    try {
+      setIsExportingExcel(true);
+      setExportStatusBanner(null);
+      await exportExamResultsExcel(
+        exam.title,
+        summary,
+        examSessions,
+        students,
+        papers,
+        questions
+      );
+      setExportStatusBanner({
+        type: 'success',
+        message: `Đã xuất tệp báo cáo Excel (.xlsx) gồm 3 trang tính cho kỳ thi "${exam.title}" (${examSessions.length} học sinh)!`,
+      });
+    } catch (err: any) {
+      console.error('Lỗi khi xuất báo cáo Excel:', err);
+      setExportStatusBanner({
+        type: 'error',
+        message: `Không thể xuất báo cáo Excel: ${err?.message || 'Lỗi không xác định'}`,
+      });
+    } finally {
+      setIsExportingExcel(false);
+    }
   };
 
   // Chi tiết bài làm của học sinh đang được chọn xem
   const activeDetailStudent = selectedStudentId ? studentMap.get(selectedStudentId) : null;
   const activeDetailSession = selectedStudentId
-    ? sessions[`${selectedStudentId}_${exam.id}`]
+    ? examSessions.find((s) => s.studentId === selectedStudentId) ||
+      sessions[`${selectedStudentId}_${exam.id}`]
     : null;
   const activeDetailPaper = selectedStudentId
     ? papers[`${selectedStudentId}_${exam.id}`]
@@ -87,6 +169,26 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {exportStatusBanner && (
+        <div
+          data-testid="excel-export-status-banner"
+          className={`p-3.5 rounded-xl border text-xs font-bold flex items-center justify-between ${
+            exportStatusBanner.type === 'error'
+              ? 'bg-red-50 border-red-200 text-red-700'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <span>{exportStatusBanner.message}</span>
+          <button
+            type="button"
+            onClick={() => setExportStatusBanner(null)}
+            className="text-slate-400 hover:text-slate-600 px-2 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Tiêu đề & Chọn bài kiểm tra & Xuất Excel */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -113,11 +215,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
 
         <div className="flex items-center space-x-2">
           <button
-            onClick={handleExportExcel}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm"
+            type="button"
+            data-testid="btn-export-exam-results-excel"
+            disabled={isExportingExcel}
+            onClick={() => void handleExportExcel()}
+            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
           >
             <FileDown className="w-4 h-4" />
-            <span>Xuất báo cáo Excel (.xlsx)</span>
+            <span>
+              {isExportingExcel ? 'Đang tạo tệp Excel...' : 'Xuất báo cáo Excel (.xlsx)'}
+            </span>
           </button>
         </div>
       </div>

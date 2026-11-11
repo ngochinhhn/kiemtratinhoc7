@@ -599,6 +599,34 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     return () => clearInterval(timer);
   }, [isTakingExam, isSubmitted]);
 
+  // Lưu kết quả điểm thi vào bộ nhớ đệm cục bộ của máy học sinh (localStorage) ngay lập tức trước khi gửi lên cơ sở dữ liệu
+  const saveLocalStudentScoreCache = (sessionToCache: StudentExamSession) => {
+    if (typeof window === 'undefined' || !loggedInStudent || !activeExam) return;
+    try {
+      const cacheKey = 'smarttest7_local_score_cache_v1';
+      const raw = window.localStorage.getItem(cacheKey);
+      const map: Record<string, any> = raw ? JSON.parse(raw) : {};
+      map[`${loggedInStudent.id}_${activeExam.id}`] = {
+        studentId: loggedInStudent.id,
+        studentCode: loggedInStudent.loginCode,
+        fullName: loggedInStudent.fullName,
+        className: loggedInStudent.className,
+        examId: activeExam.id,
+        examTitle: activeExam.title,
+        paperCode: sessionToCache.paperCode,
+        score: sessionToCache.score,
+        correctCount: sessionToCache.correctCount,
+        wrongCount: sessionToCache.wrongCount,
+        unansweredCount: sessionToCache.unansweredCount,
+        submittedAt: sessionToCache.submittedAt,
+        cachedAt: new Date().toISOString(),
+      };
+      window.localStorage.setItem(cacheKey, JSON.stringify(map));
+    } catch {
+      // ignore storage quota errors
+    }
+  };
+
   // Hàm đẩy kết quả bài thi của học sinh lên Firestore (hỗ trợ cả nộp lần đầu và gửi lại khi lỗi mạng / rules)
   const pushStudentResultToCloud = async (sessionToPush: StudentExamSession) => {
     if (!loggedInStudent || !activeExam) return;
@@ -618,32 +646,16 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     if (!res.ok) {
       setSubmitCloudError(
         res.error ||
-          'Không thể gửi điểm về máy chủ Firebase Firestore. Vui lòng kiểm tra kết nối mạng hoặc cấu hình Firestore Security Rules và bấm "Gửi lại kết quả lên hệ thống".'
+          'Kết nối Internet bị gián đoạn khi gửi điểm lên cơ sở dữ liệu. Điểm của em đã được lưu trong bộ nhớ đệm của máy để Giáo viên kiểm tra trực tiếp. Bấm "Gửi lại kết quả lên hệ thống" khi có mạng.'
       );
-      setShowConfirmSubmit(true);
       return;
     }
 
     setSyncedSubmissionId(res.submissionId);
     setSubmitCloudError(null);
-    isSubmittedRef.current = true;
-    isTakingExamRef.current = false;
-    setIsTakingExam(false);
-    setIsSubmitted(true);
-    setShowConfirmSubmit(false);
-
-    try {
-      confetti({
-        particleCount: 80,
-        spread: 70,
-        origin: { y: 0.6 },
-      });
-    } catch (_e) {
-      // ignore
-    }
   };
 
-  // Nộp bài thi: Chấm điểm -> Lưu trạng thái bài nộp -> Chờ (await) đẩy Document độc lập lên Firestore
+  // Nộp bài thi: Chấm điểm -> Lưu ngay vào bộ nhớ đệm của máy -> Hiện điểm ngay lập tức để Giáo viên/Học sinh xem (nếu bật hiện điểm) TRƯỚC KHI gửi điểm lên cơ sở dữ liệu
   const handleSubmitExam = async (_isAutoSubmit: boolean = false) => {
     if (!currentSession || !currentPaper || !activeExam || !loggedInStudent) return;
 
@@ -667,12 +679,30 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
       lastHeartbeat: new Date().toISOString(),
     };
 
+    // 1. Lưu ngay vào bộ nhớ đệm của máy và cập nhật phiên thi cục bộ
     isTakingExamRef.current = false;
+    isSubmittedRef.current = true;
     currentSessionRef.current = submittedSession;
     setPendingSubmittedSession(submittedSession);
+    saveLocalStudentScoreCache(submittedSession);
     onUpdateSession(submittedSession);
-    setShowConfirmSubmit(true);
 
+    // 2. Chuyển ngay sang màn hình Hoàn thành & Hiện điểm từ bộ nhớ đệm của máy trước khi gửi lên CSDL
+    setShowConfirmSubmit(false);
+    setIsTakingExam(false);
+    setIsSubmitted(true);
+
+    try {
+      confetti({
+        particleCount: 80,
+        spread: 70,
+        origin: { y: 0.6 },
+      });
+    } catch (_e) {
+      // ignore
+    }
+
+    // 3. Gửi điểm lên cơ sở dữ liệu ở chế độ nền (không chặn màn hình xem điểm nếu mất Internet)
     await pushStudentResultToCloud(submittedSession);
   };
 
@@ -831,9 +861,14 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
     );
   }
 
-  // 2. MÀN HÌNH ĐÃ NỘP BÀI THÀNH CÔNG
+  // 2. MÀN HÌNH ĐÃ NỘP BÀI THÀNH CÔNG (HIỂN THỊ ĐIỂM NGAY TỪ BỘ NHỚ ĐỆM CỦA MÁY TRƯỚC KHI GỬI LÊN CSDL)
   if (isSubmitted) {
-    const finalSession = sessionKey ? sessions[sessionKey] : null;
+    const finalSession =
+      pendingSubmittedSession ||
+      currentSessionRef.current ||
+      (sessionKey ? sessions[sessionKey] : null);
+
+    const allowShowScore = activeExam ? activeExam.allowReviewAfterSubmit !== false : true;
 
     return (
       <div className="max-w-2xl mx-auto my-8 space-y-6">
@@ -847,9 +882,72 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
               ĐÃ NỘP BÀI THI THÀNH CÔNG!
             </h2>
             <p className="text-xs text-slate-500">
-              Hệ thống đã ghi nhận toàn bộ câu trả lời của em vào cơ sở dữ liệu phòng thi.
+              Điểm số và bài làm đã được lưu ngay vào bộ nhớ đệm của máy để Giáo viên kiểm tra trực tiếp ngay cả khi mất kết nối Internet.
             </p>
           </div>
+
+          {/* Hiển thị điểm số NGAY LẬP TỨC từ bộ nhớ đệm của máy (nếu chức năng hiện điểm được bật) */}
+          {allowShowScore && finalSession?.score !== undefined && (
+            <div
+              data-testid="student-immediate-local-score-card"
+              className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-xl p-6 shadow-md space-y-2"
+            >
+              <div className="inline-flex items-center space-x-1.5 bg-white/15 px-3 py-0.5 rounded-full text-[11px] font-bold text-amber-200">
+                <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
+                <span>Đã lưu tại bộ nhớ đệm của máy (Xem điểm ngay)</span>
+              </div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-blue-200">
+                Kết quả bài làm của em
+              </p>
+              <div className="text-5xl font-black text-amber-300 tracking-tight">
+                {finalSession.score}{' '}
+                <span className="text-2xl font-bold text-white">/ 10 điểm</span>
+              </div>
+              <p className="text-xs text-blue-100">
+                Đúng: <strong>{finalSession.correctCount}</strong> câu • Sai:{' '}
+                <strong>{finalSession.wrongCount}</strong> câu • Bỏ trống:{' '}
+                <strong>{finalSession.unansweredCount ?? 0}</strong> câu
+              </p>
+            </div>
+          )}
+
+          {/* Trạng thái gửi điểm lên cơ sở dữ liệu (chạy sau khi đã hiện điểm trên máy) */}
+          {isSubmittingToCloud ? (
+            <div
+              data-testid="student-submitting-cloud-state"
+              className="bg-blue-50 border border-blue-200 text-blue-800 rounded-xl p-3.5 text-xs flex items-center justify-center space-x-2 font-semibold"
+            >
+              <RefreshCw className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
+              <span>
+                Điểm đã hiện trên máy • Đang đồng bộ kết quả lên cơ sở dữ liệu máy chủ...
+              </span>
+            </div>
+          ) : submitCloudError ? (
+            <div
+              data-testid="student-submit-cloud-error-panel"
+              className="bg-amber-50 border border-amber-300 text-amber-900 rounded-xl p-4 text-left text-xs space-y-2"
+            >
+              <p className="font-extrabold flex items-center space-x-1.5 text-amber-950">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  Chưa gửi được điểm lên cơ sở dữ liệu (Đã lưu điểm an toàn tại bộ nhớ đệm của máy):
+                </span>
+              </p>
+              <p className="text-[11px] text-amber-800">
+                Giáo viên có thể xem trực tiếp điểm số <strong>{finalSession?.score} / 10</strong> của em ngay trên màn hình máy này. Khi kết nối mạng ổn định lại, hãy bấm nút <strong>&ldquo;Gửi lại kết quả lên hệ thống&rdquo;</strong> bên dưới.
+              </p>
+              <p className="font-mono text-[11px] bg-white/80 border border-amber-200 rounded px-2.5 py-1 text-red-700 break-words">
+                {submitCloudError}
+              </p>
+            </div>
+          ) : (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-3 text-xs flex items-center justify-center space-x-1.5 font-bold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                Đã lưu tại bộ nhớ đệm của máy và gửi điểm lên cơ sở dữ liệu hệ thống thành công!
+              </span>
+            </div>
+          )}
 
           {/* Thông tin học sinh và kết quả */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-left text-xs space-y-2">
@@ -863,14 +961,16 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
             </div>
             <div className="flex justify-between py-1 border-b border-slate-200">
               <span className="text-slate-500">Mã đề thi của em:</span>
-              <strong className="text-blue-700 font-mono">{currentSession?.paperCode}</strong>
+              <strong className="text-blue-700 font-mono">
+                {finalSession?.paperCode || currentSession?.paperCode}
+              </strong>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-200">
               <span className="text-slate-500">Bài kiểm tra:</span>
               <strong className="text-slate-800">{activeExam?.title}</strong>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-200">
-              <span className="text-slate-500">Thời điểm nộp:</span>
+              <span className="text-slate-500">Thời điểm nộp (Bộ nhớ đệm máy):</span>
               <strong className="text-slate-800">
                 {finalSession?.submittedAt
                   ? new Date(finalSession.submittedAt).toLocaleTimeString('vi-VN')
@@ -884,33 +984,6 @@ export const StudentExamView: React.FC<StudentExamViewProps> = ({
               </strong>
             </div>
           </div>
-
-          {/* Hiển thị điểm số nếu giáo viên cho phép */}
-          {activeExam?.allowReviewAfterSubmit && finalSession?.score !== undefined && (
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-xl p-6 shadow-md space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-blue-200">
-                Kết quả bài làm của em
-              </p>
-              <div className="text-5xl font-black text-amber-300 tracking-tight">
-                {finalSession.score}{' '}
-                <span className="text-2xl font-bold text-white">/ 10 điểm</span>
-              </div>
-              <p className="text-xs text-blue-100">
-                Đúng: <strong>{finalSession.correctCount}</strong> câu • Sai:{' '}
-                <strong>{finalSession.wrongCount}</strong> câu
-              </p>
-            </div>
-          )}
-
-          {submitCloudError && (
-            <div className="bg-red-50 border border-red-300 text-red-800 rounded-xl p-4 text-left text-xs space-y-2">
-              <p className="font-bold flex items-center space-x-1.5">
-                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
-                <span>Lỗi khi gửi điểm lên máy chủ Firebase Firestore:</span>
-              </p>
-              <p className="font-mono text-[11px] break-words">{submitCloudError}</p>
-            </div>
-          )}
 
           <div className="flex flex-wrap justify-center gap-3 pt-2">
             {finalSession && (

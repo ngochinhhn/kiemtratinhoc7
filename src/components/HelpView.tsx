@@ -68,10 +68,10 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
             </div>
             <div>
               <h2 className="text-base font-extrabold text-slate-800">
-                Thông tin về tác giả
+                Thông tin về tác giả phần mềm
               </h2>
               <p className="text-xs text-slate-500">
-                Thiết kế và phát triển phần mềm phục vụ giảng dạy & kiểm tra đánh giá môn Tin học THCS
+                Thiết kế và phát triển phần mềm phục vụ giảng dạy &amp; kiểm tra đánh giá môn Tin học THCS
               </p>
             </div>
           </div>
@@ -89,10 +89,10 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
             </div>
             <div className="space-y-1">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                Tác giả & Đơn vị công tác
+                Tác giả &amp; Đơn vị công tác
               </span>
               <p className="text-sm font-extrabold text-slate-900">
-                Thầy giáo Ngô Văn Chinh - Trường TH&amp;THCS Thụy Lâm
+                Tác giả: Cô giáo Hoàng Thị Thùy Trang
               </p>
               <p className="text-xs text-slate-600 font-medium">
                 Trường TH &amp; THCS Thụy Lâm - Xã Thư Lâm - TP Hà Nội
@@ -110,10 +110,10 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
                 Điện thoại liên hệ
               </span>
               <p className="text-base font-black text-emerald-700 font-mono">
-                Điện thoại: 0983460604
+                Điện thoại: 0339104040
               </p>
               <p className="text-xs text-slate-500">
-                Hỗ trợ kỹ thuật &amp; trao đổi chuyên môn
+                Liên hệ tác giả &amp; trao đổi chuyên môn
               </p>
             </div>
           </div>
@@ -128,12 +128,43 @@ export const HelpView: React.FC<HelpViewProps> = ({ isModal = false, onClose }) 
                 Địa chỉ thư điện tử
               </span>
               <p className="text-sm font-extrabold text-indigo-700 font-mono break-all">
-                Email: nvchinh@moet.edu.vn
+                Email: hoangthuytrang206@gmail.com
               </p>
               <p className="text-xs text-slate-500">
                 Gửi góp ý &amp; chia sẻ tài liệu giảng dạy
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* HỖ TRỢ KĨ THUẬT (CHỈ HIỂN THỊ TRONG PHẦN TRỢ GIÚP) */}
+        <div
+          data-testid="help-technical-support-section"
+          className="px-6 py-4 bg-indigo-50/70 border-t border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-start space-x-3">
+            <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <div className="space-y-0.5 text-xs">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600 block">
+                Hỗ trợ kĩ thuật
+              </span>
+              <p className="font-extrabold text-slate-900 text-sm">
+                Thầy giáo Ngô Văn Chinh - Trường TH &amp; THCS Thụy Lâm
+              </p>
+              <p className="text-[11px] text-slate-600">
+                Trường TH &amp; THCS Thụy Lâm - Xã Thư Lâm - TP Hà Nội
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-mono font-bold">
+            <span className="bg-white text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg shadow-2xs">
+              Điện thoại: 0983460604
+            </span>
+            <span className="bg-white text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg shadow-2xs">
+              Email: nvchinh@moet.edu.vn
+            </span>
           </div>
         </div>
       </section>

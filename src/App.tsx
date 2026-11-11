@@ -99,7 +99,7 @@ export default function App() {
   // Modal Trợ giúp
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
-  // Trạng thái đồng bộ trực tiếp vào thư mục src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts)
+  // Trạng thái đồng bộ trực tiếp vào thư mục src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts) và Cloud Firestore
   const [lastRepoSyncAt, setLastRepoSyncAt] = useState<string | null>(() =>
     appStorage.getLastRepoSyncAt()
   );
@@ -110,14 +110,14 @@ export default function App() {
   const [isQuotaBannerDismissed, setIsQuotaBannerDismissed] = useState<boolean>(false);
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState<boolean>(false);
+  const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
 
   // Đề thi đang chọn để giám sát / xem kết quả
   const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
 
   const isTeacherRef = useRef<boolean>(isAuthenticated && currentRole === 'giaovien');
-  const hasSeededEmptyFirestoreRef = useRef<boolean>(false);
-  const hasInitialFirestoreSnapshotArrivedRef = useRef<boolean>(false);
-  const pendingTeacherSyncAfterInitRef = useRef<boolean>(false);
   const isWritingToFirestoreRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -155,11 +155,11 @@ export default function App() {
     }
   };
 
-  // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/ VÀ lên Cloud Firestore
+  // Hàm lưu & đồng bộ trực tiếp toàn bộ dữ liệu hiện hành vào src/data/ VÀ lên Cloud Firestore (Chỉ thực thi khi Giáo viên bấm "Lưu Data" hoặc chọn Lưu khi đăng xuất)
   const syncTeacherDataToRepo = async () => {
     setIsSyncingData(true);
     try {
-      const [repoRes] = await Promise.all([
+      const [repoRes, cloudRes] = await Promise.all([
         appStorage.flushRepoSyncBeforeLogout(),
         syncTeacherDataToFirestore(),
       ]);
@@ -167,6 +167,15 @@ export default function App() {
         setLastRepoSyncAt(repoRes.updatedAt);
       } else {
         setLastRepoSyncAt(appStorage.getLastRepoSyncAt());
+      }
+      if (repoRes.ok || cloudRes.ok) {
+        setHasUnsavedChanges(false);
+        const msg =
+          'Đã lưu dữ liệu vào Data và đồng bộ lên Cloud Firestore thành công!';
+        setSaveSuccessToast(msg);
+        setTimeout(() => {
+          setSaveSuccessToast((prev) => (prev === msg ? null : prev));
+        }, 4000);
       }
       return repoRes;
     } finally {
@@ -206,8 +215,6 @@ export default function App() {
     const unsubFirestore = subscribeAllFirestoreData({
       onExams: (remoteExams, isEmpty) => {
         if (isWritingToFirestoreRef.current) return;
-        const wasFirstSnapshot = !hasInitialFirestoreSnapshotArrivedRef.current;
-        hasInitialFirestoreSnapshotArrivedRef.current = true;
 
         if (!isEmpty && remoteExams.length > 0) {
           // Khi trên Firebase đã có dữ liệu, tuyệt đối ưu tiên hiển thị dữ liệu từ Firebase,
@@ -225,18 +232,6 @@ export default function App() {
             const active = updatedExams.find((e) => e.status === 'dang_dien_ra') || updatedExams[0];
             return active ? active.id : null;
           });
-          if (wasFirstSnapshot && pendingTeacherSyncAfterInitRef.current) {
-            pendingTeacherSyncAfterInitRef.current = false;
-            void syncTeacherDataToFirestore();
-          }
-        } else if (
-          isEmpty &&
-          (isTeacherRef.current || pendingTeacherSyncAfterInitRef.current) &&
-          !hasSeededEmptyFirestoreRef.current
-        ) {
-          hasSeededEmptyFirestoreRef.current = true;
-          pendingTeacherSyncAfterInitRef.current = false;
-          void syncTeacherDataToFirestore();
         }
       },
       onQuestions: (remoteQuestions, isEmpty) => {
@@ -261,10 +256,7 @@ export default function App() {
       },
       onSubmissions: (remoteSubmissions) => {
         if (remoteSubmissions.length > 0) {
-          appStorage.mergeRemoteSubmissionsFromFirestore(
-            remoteSubmissions,
-            isTeacherRef.current
-          );
+          appStorage.mergeRemoteSubmissionsFromFirestore(remoteSubmissions, false);
           setSessions(appStorage.getSessions());
           setStudents(appStorage.getStudents());
           setLastFirestoreSyncAt(new Date().toISOString());
@@ -286,20 +278,8 @@ export default function App() {
     };
   }, []);
 
-  // Đảm bảo tự động lưu vào src/data/ trước khi Giáo viên đóng tab hoặc tải lại trang
-  useEffect(() => {
-    if (!isAuthenticated || currentRole !== 'giaovien') return;
-    const handleBeforeUnload = () => {
-      appStorage.syncViaBeacon();
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [isAuthenticated, currentRole]);
-
   // Xử lý đăng nhập Giáo viên (bằng tài khoản admin nội bộ hoặc Google):
-  // Tự động kết nối và đọc/ghi trực tiếp lên Firebase Firestore giống hệt như đăng nhập Google
+  // Chỉ lưu & đồng bộ lên Cloud Firestore khi Giáo viên bấm nút "Lưu Data"
   const handleLoginTeacher = () => {
     if (typeof window !== 'undefined') {
       window.sessionStorage.removeItem(ACTIVE_STUDENT_STORAGE_KEY);
@@ -313,11 +293,7 @@ export default function App() {
     setActiveTab('tongquan');
     setIsAuthenticated(true);
     setFirestoreError(null);
-    if (hasInitialFirestoreSnapshotArrivedRef.current) {
-      void syncTeacherDataToFirestore();
-    } else {
-      pendingTeacherSyncAfterInitRef.current = true;
-    }
+    setHasUnsavedChanges(false);
   };
 
   // Đăng nhập Giáo viên qua Google Firebase Auth
@@ -349,17 +325,19 @@ export default function App() {
     setIsAuthenticated(true);
   };
 
-  // Đăng xuất về cửa sổ đăng nhập ban đầu:
-  // Nếu đang ở vai trò Giáo viên, bắt buộc thực hiện lưu & cập nhật toàn bộ Data vào src/data/ TRƯỚC KHI thoát tài khoản
-  const handleLogout = async () => {
+  // Thực hiện thoát tài khoản về cửa sổ đăng nhập (có hoặc không lưu tùy lựa chọn của Giáo viên)
+  const performLogoutNow = async (saveBeforeLogout: boolean) => {
     if (typeof window !== 'undefined') {
       window.sessionStorage.removeItem(ACTIVE_STUDENT_STORAGE_KEY);
       window.sessionStorage.removeItem(ACTIVE_STUDENT_EXAM_ID_KEY);
     }
+    setIsLogoutConfirmOpen(false);
     if (currentRole === 'giaovien') {
       setIsLoggingOut(true);
       try {
-        await syncTeacherDataToRepo();
+        if (saveBeforeLogout) {
+          await syncTeacherDataToRepo();
+        }
         if (firebaseUserEmail) {
           await signOutFirebase();
           setFirebaseUserEmail(null);
@@ -368,27 +346,37 @@ export default function App() {
         setIsLoggingOut(false);
       }
     }
+    setHasUnsavedChanges(false);
     setIsAuthenticated(false);
     setAuthenticatedStudent(null);
     setStudentChosenExamId(null);
   };
 
-  // Xử lý cập nhật ngân hàng câu hỏi (đồng bộ cả đề thi, phiếu bài làm và tự động lưu vào src/data/)
+  // Khi bấm nút "Đăng xuất": Nếu Giáo viên có thay đổi chưa bấm "Lưu Data", hiển thị hộp thoại hỏi có lưu và đồng bộ không
+  const handleLogout = async () => {
+    if (currentRole === 'giaovien' && hasUnsavedChanges) {
+      setIsLogoutConfirmOpen(true);
+      return;
+    }
+    await performLogoutNow(false);
+  };
+
+  // Xử lý cập nhật ngân hàng câu hỏi (chỉ lưu cục bộ, chờ bấm "Lưu Data" mới đồng bộ Cloud)
   const handleSaveQuestions = (newQuestions: Question[]) => {
     appStorage.saveQuestions(newQuestions);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
-  // Xử lý cập nhật danh sách học sinh (tự động lưu vào src/data/)
+  // Xử lý cập nhật danh sách học sinh (chỉ lưu cục bộ, chờ bấm "Lưu Data" mới đồng bộ Cloud)
   const handleSaveStudents = (newStudents: Student[]) => {
     appStorage.saveStudents(newStudents);
     setStudents(newStudents);
     setClasses(appStorage.getClasses());
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -397,7 +385,7 @@ export default function App() {
     const ok = appStorage.addClass(className);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
     return ok;
   };
@@ -407,7 +395,7 @@ export default function App() {
     const result = appStorage.addClasses(classNames);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
     return result;
   };
@@ -417,7 +405,7 @@ export default function App() {
     appStorage.deleteClass(className, deleteStudents);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -426,7 +414,7 @@ export default function App() {
     appStorage.batchDeleteStudents(studentIds);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -436,7 +424,7 @@ export default function App() {
     setExams(newExams);
     setPapers(appStorage.getPapers());
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -445,7 +433,7 @@ export default function App() {
     appStorage.deleteExam(examId);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -455,7 +443,7 @@ export default function App() {
     reloadData();
     setSelectedExamId(examId);
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -464,7 +452,7 @@ export default function App() {
     appStorage.pauseExam(examId);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -473,7 +461,7 @@ export default function App() {
     appStorage.finishExam(examId);
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -502,7 +490,7 @@ export default function App() {
     appStorage.saveConfig(newConfig);
     setConfig(newConfig);
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -514,8 +502,10 @@ export default function App() {
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = `Sao_Luu_SMART_TEST_7_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
     anchor.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
   // Phục hồi JSON
@@ -524,7 +514,7 @@ export default function App() {
     if (success) {
       reloadData();
       if (currentRole === 'giaovien') {
-        void syncTeacherDataToRepo();
+        setHasUnsavedChanges(true);
       }
     }
     return success;
@@ -535,7 +525,7 @@ export default function App() {
     appStorage.resetToDefaults();
     reloadData();
     if (currentRole === 'giaovien') {
-      void syncTeacherDataToRepo();
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -571,7 +561,27 @@ export default function App() {
           isSyncingData={isSyncingData}
           isLoggingOut={isLoggingOut}
           lastRepoSyncAt={lastRepoSyncAt}
+          hasUnsavedChanges={hasUnsavedChanges}
         />
+      )}
+
+      {/* THÔNG BÁO ĐÃ LƯU DATA VÀ ĐỒNG BỘ CLOUD FIRESTORE THÀNH CÔNG */}
+      {saveSuccessToast && isAuthenticated && currentRole === 'giaovien' && (
+        <div
+          data-testid="save-data-success-banner"
+          className="bg-emerald-600 text-white px-4 py-2 text-xs font-bold shadow-xs"
+        >
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <span>✓ {saveSuccessToast}</span>
+            <button
+              type="button"
+              onClick={() => setSaveSuccessToast(null)}
+              className="text-emerald-100 hover:text-white p-0.5 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
       )}
 
       {/* THÔNG BÁO CHẾ ĐỘ ĐỒNG BỘ DỰ PHÒNG TỰ ĐỘNG KHI FIREBASE FIRESTORE HẾT HẠN MỨC ĐỌC MIỄN PHÍ TRONG NGÀY (CHỈ HIỂN THỊ CHO GIÁO VIÊN) */}
@@ -832,10 +842,68 @@ export default function App() {
             SMART TEST 7 – Hệ thống thi trắc nghiệm trực tuyến môn Tin học 7 (Bộ sách Kết nối tri thức với cuộc sống)
           </span>
           <span className="font-semibold text-blue-800">
-            Thiết kế bởi thầy giáo: Ngô Văn Chinh. Trường TH &amp; THCS Thụy Lâm - Xã Thư Lâm - TP Hà Nội
+            Tác giả: Cô giáo Hoàng Thị Thùy Trang • Trường TH &amp; THCS Thụy Lâm
           </span>
         </div>
       </footer>
+
+      {/* MODAL XÁC NHẬN LƯU & ĐỒNG BỘ DATA TRƯỚC KHI ĐĂNG XUẤT NẾU GIÁO VIÊN CHƯA BẤM "LƯU DATA" */}
+      {isLogoutConfirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          data-testid="teacher-logout-confirm-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-slate-200">
+            <div className="flex items-start space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-extrabold text-slate-900">
+                  Dữ liệu mới chưa được lưu &amp; đồng bộ Cloud
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Thầy/Cô có thay đổi dữ liệu trong phiên làm việc nhưng chưa bấm nút{' '}
+                  <strong>&ldquo;Lưu Data&rdquo;</strong>. Thầy/Cô có muốn lưu và đồng bộ dữ liệu lên Cloud Firestore trước khi đăng xuất không?
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                data-testid="btn-logout-cancel"
+                disabled={isLoggingOut}
+                onClick={() => setIsLogoutConfirmOpen(false)}
+                className="px-3.5 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                data-testid="btn-logout-without-saving"
+                disabled={isLoggingOut}
+                onClick={() => void performLogoutNow(false)}
+                className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Đăng xuất không lưu
+              </button>
+              <button
+                type="button"
+                data-testid="btn-logout-save-and-sync"
+                disabled={isLoggingOut}
+                onClick={() => void performLogoutNow(true)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold shadow-xs flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                {isLoggingOut && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>Lưu &amp; Đồng bộ rồi Đăng xuất</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Trợ giúp & Thông tin tác giả (khi mở từ màn hình đăng nhập hoặc chế độ Học sinh) */}
       {isHelpModalOpen && (

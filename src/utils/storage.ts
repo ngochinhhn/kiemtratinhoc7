@@ -1373,17 +1373,11 @@ export class AppStorage {
     } catch {
       // ignore
     }
-    if (this.repoSyncTimer) {
-      clearTimeout(this.repoSyncTimer);
-    }
-    this.repoSyncTimer = setTimeout(() => {
-      void this.syncToSourceRepo();
-    }, 100);
   }
 
   /**
    * Thực thi lưu và cập nhật ngay lập tức toàn bộ Data vào src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts)
-   * trước khi Giáo viên đăng xuất khỏi tài khoản.
+   * khi Giáo viên bấm nút "Lưu Data" hoặc chọn Lưu trước khi đăng xuất.
    */
   public async flushRepoSyncBeforeLogout(): Promise<{
     ok: boolean;

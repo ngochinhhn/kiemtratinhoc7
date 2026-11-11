@@ -34,6 +34,7 @@ interface NavbarProps {
   isSyncingData?: boolean;
   isLoggingOut?: boolean;
   lastRepoSyncAt?: string | null;
+  hasUnsavedChanges?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -50,6 +51,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   isSyncingData = false,
   isLoggingOut = false,
   lastRepoSyncAt,
+  hasUnsavedChanges = false,
 }) => {
   return (
     <header className="bg-blue-800 text-white shadow-md sticky top-0 z-40 border-b border-blue-900">
@@ -76,33 +78,39 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
 
-          {/* Thông tin phiên đăng nhập, trạng thái tự động lưu Data, nút Trợ giúp & Đăng xuất */}
+          {/* Thông tin phiên đăng nhập, nút Lưu Data thủ công, nút Trợ giúp & Đăng xuất */}
           <div className="flex items-center space-x-1.5 sm:space-x-2">
-            {/* Nút / Trạng thái tự động lưu Data vào thư mục src/data/ cho Giáo viên */}
+            {/* Nút Lưu Data thủ công (Chỉ lưu & đồng bộ lên Cloud Firestore khi bấm nút này) */}
             {currentRole === 'giaovien' && onSyncData && (
               <button
                 type="button"
                 data-testid="navbar-btn-sync-data"
                 onClick={onSyncData}
                 disabled={isSyncingData || isLoggingOut}
-                className="bg-emerald-700/90 hover:bg-emerald-600 disabled:opacity-75 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg flex items-center space-x-1 border border-emerald-500/80 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
+                className={`disabled:opacity-75 text-xs font-bold px-2.5 py-1.5 rounded-lg flex items-center space-x-1 border transition-colors shadow-xs cursor-pointer whitespace-nowrap ${
+                  hasUnsavedChanges
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-300 ring-2 ring-amber-300/60'
+                    : 'bg-emerald-700/90 hover:bg-emerald-600 text-white border-emerald-500/80'
+                }`}
                 title={
-                  lastRepoSyncAt
-                    ? `Tự động lưu vào Data (seedQuestions.ts, seedStudents.ts, seedExams.ts) • Lần cuối: ${new Date(
+                  hasUnsavedChanges
+                    ? 'Có dữ liệu mới chưa lưu! Bấm "Lưu Data" để lưu và đồng bộ lên Cloud Firestore'
+                    : lastRepoSyncAt
+                    ? `Bấm "Lưu Data" để lưu và đồng bộ lên Cloud Firestore • Lần lưu cuối: ${new Date(
                         lastRepoSyncAt
                       ).toLocaleTimeString('vi-VN')}`
-                    : 'Lưu và cập nhật toàn bộ dữ liệu vào thư mục Data'
+                    : 'Bấm "Lưu Data" để lưu và đồng bộ toàn bộ dữ liệu lên Cloud Firestore'
                 }
               >
                 {isSyncingData ? (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 text-emerald-200 animate-spin shrink-0" />
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
                     <span>Đang lưu Data...</span>
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                    <span>Đã lưu Data</span>
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>{hasUnsavedChanges ? 'Lưu Data (Chưa lưu)' : 'Lưu Data'}</span>
                   </>
                 )}
               </button>
@@ -143,14 +151,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
 
-            {/* Nút Đăng xuất về cửa sổ đăng nhập (Tự động lưu Data trước khi thoát tài khoản Giáo viên) */}
+            {/* Nút Đăng xuất về cửa sổ đăng nhập */}
             <button
               type="button"
               data-testid="navbar-btn-logout"
               onClick={onLogout}
               disabled={isLoggingOut}
               className="bg-red-600 hover:bg-red-500 disabled:opacity-75 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg flex items-center space-x-1 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
-              title="Tự động lưu cập nhật vào Data và đăng xuất khỏi phiên làm việc"
+              title="Đăng xuất khỏi phiên làm việc"
             >
               {isLoggingOut ? (
                 <>
