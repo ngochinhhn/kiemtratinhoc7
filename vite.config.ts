@@ -1,12 +1,77 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
-import { SEED_EXAMS, SEED_CONFIG, SEED_SYNC_ID, SEED_UPDATED_AT } from './src/data/seedExams';
-import { SEED_QUESTIONS } from './src/data/seedQuestions';
-import { SEED_CLASSES, SEED_STUDENTS } from './src/data/seedStudents';
+
+function extractExportedValue<T>(filePath: string, exportName: string, fallback: T): T {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const declRegex = new RegExp(
+      `export\\s+const\\s+${exportName}(?:\\s*:[^=]+)?\\s*=\\s*`
+    );
+    const match = declRegex.exec(content);
+    if (!match) return fallback;
+    const startIdx = match.index + match[0].length;
+    const rest = content.slice(startIdx).trimStart();
+    if (!rest) return fallback;
+
+    const firstChar = rest[0];
+    if (firstChar === '"' || firstChar === "'") {
+      const semiIdx = rest.indexOf(';');
+      const raw = (semiIdx !== -1 ? rest.slice(0, semiIdx) : rest).trim();
+      try {
+        return JSON.parse(raw) as T;
+      } catch {
+        return new Function(`return (${raw})`)() as T;
+      }
+    }
+
+    if (firstChar === '[' || firstChar === '{') {
+      let depth = 0;
+      let inString: string | null = null;
+      let escaped = false;
+      let endIdx = -1;
+      for (let i = 0; i < rest.length; i++) {
+        const ch = rest[i];
+        if (inString) {
+          if (escaped) {
+            escaped = false;
+          } else if (ch === '\\') {
+            escaped = true;
+          } else if (ch === inString) {
+            inString = null;
+          }
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+          inString = ch;
+          continue;
+        }
+        if (ch === '[' || ch === '{') depth++;
+        else if (ch === ']' || ch === '}') {
+          depth--;
+          if (depth === 0) {
+            endIdx = i + 1;
+            break;
+          }
+        }
+      }
+      if (endIdx !== -1) {
+        const raw = rest.slice(0, endIdx);
+        try {
+          return JSON.parse(raw) as T;
+        } catch {
+          return new Function(`return (${raw})`)() as T;
+        }
+      }
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /**
  * Plugin tự động lưu và cập nhật trực tiếp phần src/data/ (seedQuestions.ts, seedStudents.ts, seedExams.ts, liveSubmissions.json)
@@ -21,66 +86,84 @@ function repoDataSyncPlugin(): Plugin {
   const seedExamsFile = path.join(dataDir, 'seedExams.ts');
   const liveSubmissionsFile = path.join(dataDir, 'liveSubmissions.json');
 
-  // Bộ nhớ đệm trực tiếp trên máy chủ (khởi tạo từ dữ liệu seed hiện có)
-  let serverSyncId = SEED_SYNC_ID || `sync_${Date.now()}`;
-  let serverUpdatedAt = SEED_UPDATED_AT || new Date().toISOString();
-  let serverConfig: Record<string, any> = { ...(SEED_CONFIG || {}) };
-  let serverClasses: string[] = Array.isArray(SEED_CLASSES) ? [...SEED_CLASSES] : [];
-  let serverQuestions: any[] = Array.isArray(SEED_QUESTIONS) ? [...SEED_QUESTIONS] : [];
-  let serverStudents: any[] = Array.isArray(SEED_STUDENTS) ? [...SEED_STUDENTS] : [];
-  let serverExams: any[] = Array.isArray(SEED_EXAMS) ? [...SEED_EXAMS] : [];
-  const serverSubmissionsMap = new Map<string, any>();
-
-  // Đọc danh sách bài nộp đã lưu trên đĩa (nếu có)
-  try {
-    if (fs.existsSync(liveSubmissionsFile)) {
-      const raw = fs.readFileSync(liveSubmissionsFile, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        parsed.forEach((sub) => {
-          if (sub && sub.id) {
-            serverSubmissionsMap.set(String(sub.id), sub);
-          }
-        });
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  const persistStudentsToDisk = (nowIso: string) => {
-    try {
-      const nextStudentsBody = `export const SEED_CLASSES: string[] = ${JSON.stringify(
-        serverClasses,
-        null,
-        2
-      )};\n\nexport const SEED_STUDENTS: Student[] = ${JSON.stringify(
-        serverStudents,
-        null,
-        2
-      )};\n\nexport function buildSeedStudents(): Student[] {\n  return SEED_STUDENTS.map((s) => ({ ...s }));\n}\n`;
-      const existingStudentsContent = fs.existsSync(seedStudentsFile)
-        ? fs.readFileSync(seedStudentsFile, 'utf-8')
-        : '';
-      if (!existingStudentsContent.includes(nextStudentsBody)) {
-        const seedStudentsContent = `import { Student } from '../types';\n\n// Tự động cập nhật từ phiên làm việc lúc: ${nowIso}\n${nextStudentsBody}`;
-        fs.writeFileSync(seedStudentsFile, seedStudentsContent, 'utf-8');
-      }
-    } catch {
-      // ignore read-only fs errors in restricted containers
-    }
-  };
-
-  const persistSubmissionsToDisk = () => {
-    try {
-      const allSubs = Array.from(serverSubmissionsMap.values());
-      fs.writeFileSync(liveSubmissionsFile, JSON.stringify(allSubs, null, 2), 'utf-8');
-    } catch {
-      // ignore read-only fs errors
-    }
-  };
-
   const attachMiddlewares = (middlewares: any) => {
+    // Đọc dữ liệu khởi tạo trực tiếp từ đĩa khi server khởi động (không chặn lúc nạp vite.config.ts)
+    let serverSyncId = extractExportedValue<string>(
+      seedExamsFile,
+      'SEED_SYNC_ID',
+      `sync_${Date.now()}`
+    );
+    let serverUpdatedAt = extractExportedValue<string>(
+      seedExamsFile,
+      'SEED_UPDATED_AT',
+      new Date().toISOString()
+    );
+    let serverConfig: Record<string, any> = {
+      ...extractExportedValue<Record<string, any>>(seedExamsFile, 'SEED_CONFIG', {}),
+    };
+    let serverClasses: string[] = [
+      ...extractExportedValue<string[]>(seedStudentsFile, 'SEED_CLASSES', []),
+    ];
+    let serverQuestions: any[] = [
+      ...extractExportedValue<any[]>(seedQuestionsFile, 'SEED_QUESTIONS', []),
+    ];
+    let serverStudents: any[] = [
+      ...extractExportedValue<any[]>(seedStudentsFile, 'SEED_STUDENTS', []),
+    ];
+    let serverExams: any[] = [
+      ...extractExportedValue<any[]>(seedExamsFile, 'SEED_EXAMS', []),
+    ];
+    const serverSubmissionsMap = new Map<string, any>();
+
+    // Đọc danh sách bài nộp đã lưu trên đĩa (nếu có)
+    try {
+      if (fs.existsSync(liveSubmissionsFile)) {
+        const raw = fs.readFileSync(liveSubmissionsFile, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((sub) => {
+            if (sub && sub.id) {
+              serverSubmissionsMap.set(String(sub.id), sub);
+            }
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const persistStudentsToDisk = (nowIso: string) => {
+      try {
+        const nextStudentsBody = `export const SEED_CLASSES: string[] = ${JSON.stringify(
+          serverClasses,
+          null,
+          2
+        )};\n\nexport const SEED_STUDENTS: Student[] = ${JSON.stringify(
+          serverStudents,
+          null,
+          2
+        )};\n\nexport function buildSeedStudents(): Student[] {\n  return SEED_STUDENTS.map((s) => ({ ...s }));\n}\n`;
+        const existingStudentsContent = fs.existsSync(seedStudentsFile)
+          ? fs.readFileSync(seedStudentsFile, 'utf-8')
+          : '';
+        if (!existingStudentsContent.includes(nextStudentsBody)) {
+          const seedStudentsContent = `import { Student } from '../types';\n\n// Tự động cập nhật từ phiên làm việc lúc: ${nowIso}\n${nextStudentsBody}`;
+          fs.writeFileSync(seedStudentsFile, seedStudentsContent, 'utf-8');
+        }
+      } catch {
+        // ignore read-only fs errors in restricted containers
+      }
+    };
+
+    const persistSubmissionsToDisk = () => {
+      try {
+        const allSubs = Array.from(serverSubmissionsMap.values());
+        fs.writeFileSync(liveSubmissionsFile, JSON.stringify(allSubs, null, 2), 'utf-8');
+      } catch {
+        // ignore read-only fs errors
+      }
+    };
+
     // 1. Endpoint lấy/cập nhật bài nộp độc lập của học sinh (/api/live-submissions)
     middlewares.use('/api/live-submissions', (req: any, res: any, next: any) => {
       if (req.method === 'GET') {
@@ -656,6 +739,7 @@ function repoDataSyncPlugin(): Plugin {
           }
 
           try {
+            const { GoogleGenAI, Type } = await import('@google/genai');
             const ai = new GoogleGenAI({
               apiKey,
               httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
